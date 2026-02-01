@@ -413,6 +413,40 @@ class ShineMonitorAPIClient:
             return []
         return data.get("dat", {}).get("energy", [])
 
+    async def get_energy_month(
+        self, plant_id: str, year: int, month: int
+    ) -> float:
+        """Get total energy for a specific month from yearly per-month data."""
+        data = await self._api_request(
+            ACTION_QUERY_PLANT_ENERGY_YEAR_PER_MONTH,
+            {"plantid": plant_id, "date": str(year)}
+        )
+        if data.get("desc") == "ERR_NO_RECORD":
+            return 0.0
+        
+        # Response contains permonth array with ts (month number) and val (energy)
+        monthly_data = data.get("dat", {}).get("permonth", [])
+        for month_record in monthly_data:
+            try:
+                # ts field contains month like "2024-07" or just the month "7"
+                ts = str(month_record.get("ts", ""))
+                month_val = month_record.get("val", 0)
+                
+                # Parse the month from ts
+                if "-" in ts:
+                    # Format: "2024-07"
+                    record_month = int(ts.split("-")[1])
+                else:
+                    # Format: just month number
+                    record_month = int(ts)
+                
+                if record_month == month:
+                    return float(month_val)
+            except (ValueError, TypeError):
+                continue
+        
+        return 0.0
+
 
 class ShineMonitorDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Class to manage fetching Shine Monitor data."""

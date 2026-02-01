@@ -6,6 +6,8 @@ import logging
 from datetime import timedelta
 from typing import Any
 
+import calendar
+
 import voluptuous as vol
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.models import StatisticData, StatisticMetaData
@@ -78,7 +80,17 @@ async def _import_history_for_plant(
     coordinator: ShineMonitorDataUpdateCoordinator,
     start_date: datetime.date | None = None,
 ) -> None:
-    """Import historical data for a specific plant."""
+    """Import historical data for a specific plant with smart reconciliation.
+    
+    This uses a reconciliation strategy:
+    1. Get monthly total from API (more accurate)
+    2. Get daily data (has the pattern but may have gaps)
+    3. Calculate difference between monthly total and sum of daily data
+    4. If there are missing days: distribute difference to missing days
+    5. If no missing days: spread difference proportionally across existing days
+    
+    This preserves the daily pattern while ensuring monthly totals are accurate.
+    """
     plant_id = coordinator.plant_id
     plant_name = coordinator.plant_name
     client = coordinator.client
@@ -128,8 +140,8 @@ async def _import_history_for_plant(
     
     metadata = StatisticMetaData(**metadata_kwargs)
 
-    statistics: list[StatisticData] = []
-    cumulative_sum = 0.0
+    # Collect all daily data with reconciliation
+    all_daily_stats: list[tuple[datetime.date, float]] = []
 
     # Iterate through each month from start_date to now
     current_date = start_dt.replace(day=1)
@@ -141,47 +153,97 @@ async def _import_history_for_plant(
         _LOGGER.debug("Fetching data for %d-%02d", year, month)
         
         try:
-            daily_data = await client.get_energy_month_per_day(plant_id, year, month)
-            _LOGGER.debug("Got %d records for %d-%02d: %s", len(daily_data), year, month, daily_data[:3] if daily_data else "empty")
+            # Get monthly total from API (more accurate)
+            monthly_total = await client.get_energy_month(plant_id, year, month)
             
+            # Get daily data
+            daily_data = await client.get_energy_month_per_day(plant_id, year, month)
+            
+            # Parse daily data into a dict: day_of_month -> energy
+            daily_values: dict[int, float] = {}
             for day_record in daily_data:
                 try:
-                    # Parse the date from the record - API uses 'ts' field with format "YYYY-MM-DD HH:MM:SS"
                     day_str = day_record.get("ts") or day_record.get("date") or day_record.get("time") or ""
                     if not day_str:
-                        _LOGGER.debug("No date found in record: %s", day_record)
                         continue
-                    
-                    # Handle both "YYYY-MM-DD" and "YYYY-MM-DD HH:MM:SS" formats
-                    day_str = day_str.split(" ")[0]  # Take just the date part
+                    day_str = day_str.split(" ")[0]
                     day_date = datetime.datetime.strptime(day_str, "%Y-%m-%d")
                     
                     # Skip future dates
                     if day_date.date() > now.date():
                         continue
                     
-                    # API uses 'val' field for energy value
                     day_energy = float(day_record.get("val") or day_record.get("energy") or day_record.get("value") or 0)
-                    
-                    # Always add to cumulative sum and create entry (even for 0)
-                    cumulative_sum += day_energy
-                    
-                    # Create statistic for this day - must be at top of hour in UTC
-                    stat_time = datetime.datetime(
-                        day_date.year, day_date.month, day_date.day,
-                        0, 0, 0, tzinfo=datetime.timezone.utc
-                    )
-                    
-                    statistics.append(
-                        StatisticData(
-                            start=stat_time,
-                            sum=cumulative_sum,
-                            state=day_energy,
-                        )
-                    )
-                except (ValueError, KeyError) as err:
-                    _LOGGER.debug("Error parsing day record: %s", err)
+                    daily_values[day_date.day] = day_energy
+                except (ValueError, KeyError):
                     continue
+            
+            # Determine how many days in this month (up to today if current month)
+            if year == now.year and month == now.month:
+                days_in_month = now.day
+            else:
+                days_in_month = calendar.monthrange(year, month)[1]
+            
+            # Calculate daily sum and difference
+            daily_sum = sum(daily_values.values())
+            difference = monthly_total - daily_sum
+            
+            _LOGGER.debug(
+                "Month %d-%02d: monthly_api=%.1f, daily_sum=%.1f, difference=%.1f, days_with_data=%d/%d",
+                year, month, monthly_total, daily_sum, difference, len(daily_values), days_in_month
+            )
+            
+            # Only process if there's meaningful data
+            if monthly_total <= 0:
+                # Move to next month
+                if month == 12:
+                    current_date = current_date.replace(year=year + 1, month=1)
+                else:
+                    current_date = current_date.replace(month=month + 1)
+                continue
+            
+            # Find missing days (days with no data or zero)
+            missing_days = [d for d in range(1, days_in_month + 1) if daily_values.get(d, 0) == 0]
+            days_with_data = [d for d in range(1, days_in_month + 1) if daily_values.get(d, 0) > 0]
+            
+            # Reconcile the difference
+            reconciled_daily: dict[int, float] = dict(daily_values)
+            
+            if difference > 0:
+                if missing_days:
+                    # Distribute difference to missing days
+                    per_missing_day = difference / len(missing_days)
+                    for day in missing_days:
+                        reconciled_daily[day] = per_missing_day
+                    _LOGGER.debug(
+                        "Distributed %.1f kWh to %d missing days (%.1f each)",
+                        difference, len(missing_days), per_missing_day
+                    )
+                elif days_with_data:
+                    # No missing days - spread proportionally across existing days
+                    total_existing = sum(daily_values[d] for d in days_with_data)
+                    if total_existing > 0:
+                        for day in days_with_data:
+                            proportion = daily_values[day] / total_existing
+                            reconciled_daily[day] = daily_values[day] + (difference * proportion)
+                        _LOGGER.debug("Spread %.1f kWh proportionally across %d days", difference, len(days_with_data))
+            elif difference < 0 and days_with_data:
+                # Monthly is less than daily sum - reduce proportionally (rare case)
+                total_existing = sum(daily_values[d] for d in days_with_data)
+                if total_existing > 0:
+                    scale_factor = monthly_total / total_existing
+                    for day in days_with_data:
+                        reconciled_daily[day] = daily_values[day] * scale_factor
+                    _LOGGER.debug("Scaled daily values by %.3f to match monthly total", scale_factor)
+            
+            # Add reconciled daily values to our list
+            for day in range(1, days_in_month + 1):
+                day_date = datetime.date(year, month, day)
+                if day_date > now.date():
+                    break
+                energy = reconciled_daily.get(day, 0)
+                if energy > 0:
+                    all_daily_stats.append((day_date, energy))
                     
         except Exception as err:
             _LOGGER.warning("Error fetching data for %d-%02d: %s", year, month, err)
@@ -191,6 +253,26 @@ async def _import_history_for_plant(
             current_date = current_date.replace(year=year + 1, month=1)
         else:
             current_date = current_date.replace(month=month + 1)
+
+    # Sort by date and build statistics with cumulative sum
+    all_daily_stats.sort(key=lambda x: x[0])
+    
+    statistics: list[StatisticData] = []
+    cumulative_sum = 0.0
+    
+    for day_date, day_energy in all_daily_stats:
+        cumulative_sum += day_energy
+        stat_time = datetime.datetime(
+            day_date.year, day_date.month, day_date.day,
+            0, 0, 0, tzinfo=datetime.timezone.utc
+        )
+        statistics.append(
+            StatisticData(
+                start=stat_time,
+                sum=cumulative_sum,
+                state=day_energy,
+            )
+        )
 
     # Import the statistics into the sensor
     if statistics:
