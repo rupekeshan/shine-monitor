@@ -79,7 +79,7 @@ async def async_setup_entry(
 class ShineMonitorPlantAlarmSensor(
     CoordinatorEntity[ShineMonitorDataUpdateCoordinator], BinarySensorEntity
 ):
-    """Binary sensor indicating if there are active alarms."""
+    """Binary sensor indicating if there are unhandled alarms."""
 
     _attr_has_entity_name = True
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
@@ -89,7 +89,7 @@ class ShineMonitorPlantAlarmSensor(
         """Initialize the sensor."""
         super().__init__(coordinator)
         self._attr_unique_id = f"{coordinator.plant_id}_has_alarms"
-        self._attr_name = "Has Active Alarms"
+        self._attr_name = "Has Unhandled Alarms"
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -104,11 +104,12 @@ class ShineMonitorPlantAlarmSensor(
 
     @property
     def is_on(self) -> bool | None:
-        """Return true if there are active alarms."""
+        """Return true if there are unhandled alarms."""
         if self.coordinator.data is None:
             return None
-        warning_count = self.coordinator.data.get(DATA_WARNING_COUNT, 0)
-        return warning_count > 0
+        # Use unhandled count - only shows Problem for alarms that haven't been handled
+        unhandled_count = self.coordinator.data.get("unhandled_warning_count", 0)
+        return unhandled_count > 0
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -116,7 +117,8 @@ class ShineMonitorPlantAlarmSensor(
         if self.coordinator.data is None:
             return {}
         return {
-            "alarm_count": self.coordinator.data.get(DATA_WARNING_COUNT, 0),
+            "unhandled_alarm_count": self.coordinator.data.get("unhandled_warning_count", 0),
+            "total_alarm_count": self.coordinator.data.get(DATA_WARNING_COUNT, 0),
         }
 
 

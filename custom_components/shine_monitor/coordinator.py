@@ -226,7 +226,7 @@ class ShineMonitorAPIClient:
             return 0.0
         return float(data.get("dat", {}).get("energy", 0))
 
-    async def get_profit_data(self, plant_id: str) -> dict[str, float]:
+    async def get_profit_data(self, plant_id: str, daily_energy: float = 0) -> dict[str, float]:
         """Get profit and environmental data for today."""
         data = await self._api_request(
             ACTION_QUERY_PLANTS_PROFIT_ONE_DAY,
@@ -238,15 +238,20 @@ class ShineMonitorAPIClient:
         plants = data.get("dat", {}).get("plant", [])
         if plants:
             plant_data = plants[0]
+            # API returns conversion factors, multiply by energy to get actual values
+            energy = float(plant_data.get("energy", 0)) or daily_energy
+            coal_factor = float(plant_data.get("coal", 0))
+            co2_factor = float(plant_data.get("co2", 0))
+            so2_factor = float(plant_data.get("so2", 0))
             return {
                 "profit": float(plant_data.get("profit", 0)),
-                "coal": float(plant_data.get("coal", 0)),
-                "co2": float(plant_data.get("co2", 0)),
-                "so2": float(plant_data.get("so2", 0)),
+                "coal": energy * coal_factor,
+                "co2": energy * co2_factor,
+                "so2": energy * so2_factor,
             }
         return {"profit": 0, "coal": 0, "co2": 0, "so2": 0}
 
-    async def get_total_profit_data(self, plant_id: str) -> dict[str, float]:
+    async def get_total_profit_data(self, plant_id: str, total_energy: float = 0) -> dict[str, float]:
         """Get total profit and environmental data."""
         data = await self._api_request(
             ACTION_QUERY_PLANTS_PROFIT,
@@ -258,16 +263,21 @@ class ShineMonitorAPIClient:
         plants = data.get("dat", {}).get("plant", [])
         if plants:
             plant_data = plants[0]
+            # API returns conversion factors, multiply by energy to get actual values
+            energy = float(plant_data.get("energy", 0)) or total_energy
+            coal_factor = float(plant_data.get("coal", 0))
+            co2_factor = float(plant_data.get("co2", 0))
+            so2_factor = float(plant_data.get("so2", 0))
             return {
                 "profit": float(plant_data.get("profit", 0)),
-                "coal": float(plant_data.get("coal", 0)),
-                "co2": float(plant_data.get("co2", 0)),
-                "so2": float(plant_data.get("so2", 0)),
+                "coal": energy * coal_factor,
+                "co2": energy * co2_factor,
+                "so2": energy * so2_factor,
             }
         return {"profit": 0, "coal": 0, "co2": 0, "so2": 0}
 
     async def get_warning_count(self, plant_id: str) -> int:
-        """Get alarm/warning count for plant."""
+        """Get total alarm/warning count for plant."""
         data = await self._api_request(
             ACTION_QUERY_PLANT_WARNING_COUNT,
             {"plantid": plant_id}
@@ -275,6 +285,22 @@ class ShineMonitorAPIClient:
         if data.get("desc") == "ERR_NO_RECORD":
             return 0
         return int(data.get("dat", {}).get("count", 0))
+
+    async def get_unhandled_warning_count(self, plant_id: str) -> int:
+        """Get count of unhandled/active warnings by checking warning list."""
+        # Get first page of warnings to check handle status
+        # We need to iterate through pages if there are many unhandled ones
+        data = await self._api_request(
+            "queryPlantWarning",
+            {"plantid": plant_id, "pagesize": 100}
+        )
+        if data.get("desc") == "ERR_NO_RECORD":
+            return 0
+        
+        warnings = data.get("dat", {}).get("warning", [])
+        # Count warnings where handle is False (unhandled)
+        unhandled = sum(1 for w in warnings if not w.get("handle", True))
+        return unhandled
 
     async def get_installed_capacity(self, plant_id: str) -> float:
         """Get installed capacity (nominal power) for plant."""
@@ -284,9 +310,16 @@ class ShineMonitorAPIClient:
         )
         if data.get("desc") == "ERR_NO_RECORD":
             return 0.0
-        plants = data.get("dat", {}).get("plant", [])
-        if plants:
-            return float(plants[0].get("nominalPower", 0))
+        # API returns nominalPower directly in dat
+        dat = data.get("dat", {})
+        if isinstance(dat, dict):
+            # Try direct field first
+            if "nominalPower" in dat:
+                return float(dat.get("nominalPower", 0))
+            # Fall back to plant array
+            plants = dat.get("plant", [])
+            if plants:
+                return float(plants[0].get("nominalPower", 0))
         return 0.0
 
     async def get_devices(self, plant_id: str) -> list[dict[str, Any]]:
@@ -355,13 +388,18 @@ class ShineMonitorAPIClient:
         self, plant_id: str, year: int, month: int
     ) -> list[dict[str, Any]]:
         """Get daily energy for a specific month (for history import)."""
+        # API expects date parameter in YYYY-MM format
+        date_str = f"{year}-{month:02d}"
         data = await self._api_request(
             ACTION_QUERY_PLANT_ENERGY_MONTH_PER_DAY,
-            {"plantid": plant_id, "year": year, "month": month}
+            {"plantid": plant_id, "date": date_str}
         )
+        _LOGGER.debug("Energy month per day response for %s: %s", date_str, data)
         if data.get("desc") == "ERR_NO_RECORD":
             return []
-        return data.get("dat", {}).get("energy", [])
+        # API returns dat.perday with val and ts fields
+        dat = data.get("dat", {})
+        return dat.get("perday", []) or dat.get("energy", []) or []
 
     async def get_energy_year_per_month(
         self, plant_id: str, year: int
@@ -415,9 +453,11 @@ class ShineMonitorDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             monthly_energy = await self.client.get_monthly_energy(self.plant_id)
             yearly_energy = await self.client.get_yearly_energy(self.plant_id)
             total_energy = await self.client.get_total_energy(self.plant_id)
-            profit_data = await self.client.get_profit_data(self.plant_id)
-            total_profit_data = await self.client.get_total_profit_data(self.plant_id)
+            # Pass energy values for environmental calculations
+            profit_data = await self.client.get_profit_data(self.plant_id, daily_energy)
+            total_profit_data = await self.client.get_total_profit_data(self.plant_id, total_energy)
             warning_count = await self.client.get_warning_count(self.plant_id)
+            unhandled_warning_count = await self.client.get_unhandled_warning_count(self.plant_id)
             installed_capacity = await self.client.get_installed_capacity(self.plant_id)
 
             data: dict[str, Any] = {
@@ -435,6 +475,7 @@ class ShineMonitorDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "total_co2": total_profit_data.get("co2", 0),
                 "total_so2": total_profit_data.get("so2", 0),
                 DATA_WARNING_COUNT: warning_count,
+                "unhandled_warning_count": unhandled_warning_count,
                 DATA_INSTALLED_CAPACITY: installed_capacity,
                 DATA_LAST_UPDATED: dt_util.now().isoformat(),
             }

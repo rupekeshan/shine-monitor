@@ -116,17 +116,22 @@ async def _import_history_for_plant(
         
         try:
             daily_data = await client.get_energy_month_per_day(plant_id, year, month)
+            _LOGGER.debug("Got %d records for %d-%02d: %s", len(daily_data), year, month, daily_data[:3] if daily_data else "empty")
             
             for day_record in daily_data:
                 try:
-                    # Parse the date from the record
-                    day_str = day_record.get("date", "")
+                    # Parse the date from the record - API uses 'ts' field with format "YYYY-MM-DD HH:MM:SS"
+                    day_str = day_record.get("ts") or day_record.get("date") or day_record.get("time") or ""
                     if not day_str:
+                        _LOGGER.debug("No date found in record: %s", day_record)
                         continue
                     
-                    # API returns date as "YYYY-MM-DD" or similar
+                    # Handle both "YYYY-MM-DD" and "YYYY-MM-DD HH:MM:SS" formats
+                    day_str = day_str.split(" ")[0]  # Take just the date part
                     day_date = datetime.datetime.strptime(day_str, "%Y-%m-%d")
-                    day_energy = float(day_record.get("energy", 0))
+                    
+                    # API uses 'val' field for energy value
+                    day_energy = float(day_record.get("val") or day_record.get("energy") or day_record.get("value") or 0)
                     
                     if day_energy > 0:
                         cumulative_sum += day_energy

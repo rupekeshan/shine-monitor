@@ -139,10 +139,18 @@ PLANT_SENSORS: tuple[ShineMonitorSensorEntityDescription, ...] = (
     ShineMonitorSensorEntityDescription(
         key="warning_count",
         translation_key="warning_count",
-        name="Active Alarms",
+        name="Total Alarms",
         icon=ICON_WARNING,
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda data: data.get(DATA_WARNING_COUNT),
+    ),
+    ShineMonitorSensorEntityDescription(
+        key="unhandled_warning_count",
+        translation_key="unhandled_warning_count",
+        name="Unhandled Alarms",
+        icon=ICON_WARNING,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda data: data.get("unhandled_warning_count"),
     ),
 )
 
