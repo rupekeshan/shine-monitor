@@ -105,6 +105,7 @@ async def _import_history_for_plant(
         "source": DOMAIN,
         "statistic_id": statistic_id,
         "unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR,
+        "unit_class": "energy",
     }
     # Add mean_type for HA 2026.11+ compatibility
     if StatisticMeanType is not None:
@@ -148,9 +149,10 @@ async def _import_history_for_plant(
                     if day_energy > 0:
                         cumulative_sum += day_energy
                         
-                        # Create statistic for this day - must be at top of hour
-                        stat_time = dt_util.as_utc(
-                            day_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                        # Create statistic for this day - must be at top of hour in UTC
+                        stat_time = datetime.datetime(
+                            day_date.year, day_date.month, day_date.day,
+                            0, 0, 0, tzinfo=datetime.timezone.utc
                         )
                         
                         statistics.append(
@@ -208,6 +210,7 @@ async def import_monthly_statistics(
         "source": DOMAIN,
         "statistic_id": statistic_id,
         "unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR,
+        "unit_class": "energy",
     }
     if StatisticMeanType is not None:
         metadata_kwargs["mean_type"] = StatisticMeanType.NONE
@@ -233,15 +236,16 @@ async def import_monthly_statistics(
                     if month_num > 0 and month_energy > 0:
                         cumulative_sum += month_energy
                         
-                        # Create timestamp for end of month - must be at top of hour
+                        # Create timestamp for end of month - must be at top of hour in UTC
                         if month_num == 12:
                             next_month = datetime.datetime(year + 1, 1, 1)
                         else:
                             next_month = datetime.datetime(year, month_num + 1, 1)
                         
                         end_of_month = next_month - timedelta(days=1)
-                        stat_time = dt_util.as_utc(
-                            end_of_month.replace(hour=0, minute=0, second=0, microsecond=0)
+                        stat_time = datetime.datetime(
+                            end_of_month.year, end_of_month.month, end_of_month.day,
+                            0, 0, 0, tzinfo=datetime.timezone.utc
                         )
                         
                         statistics.append(
