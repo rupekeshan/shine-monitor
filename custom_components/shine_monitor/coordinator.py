@@ -164,7 +164,7 @@ class ShineMonitorAPIClient:
                     await self.authenticate()
                     return await self._api_request(action, params, retry_auth=False)
                 
-                if data.get("err") != 0 and data.get("desc") != "ERR_NO_RECORD":
+                if data.get("err") != 0 and data.get("desc") not in ("ERR_NO_RECORD", "ERR_FORMAT_ERROR"):
                     raise UpdateFailed(f"API error: {data.get('desc')}")
                 
                 return data
@@ -301,23 +301,31 @@ class ShineMonitorAPIClient:
 
     async def get_device_last_data(self, device_sn: str, device_pn: str) -> dict[str, Any]:
         """Get latest data for a device."""
-        data = await self._api_request(
-            ACTION_QUERY_DEVICE_LAST_DATA,
-            {"sn": device_sn, "pn": device_pn}
-        )
-        if data.get("desc") == "ERR_NO_RECORD":
+        try:
+            data = await self._api_request(
+                ACTION_QUERY_DEVICE_LAST_DATA,
+                {"sn": device_sn, "pn": device_pn}
+            )
+            if data.get("desc") in ("ERR_NO_RECORD", "ERR_FORMAT_ERROR"):
+                return {}
+            return data.get("dat", {})
+        except Exception as err:
+            _LOGGER.debug("Failed to get device data for %s: %s", device_sn, err)
             return {}
-        return data.get("dat", {})
 
     async def get_device_status(self, device_sn: str, device_pn: str) -> str:
         """Get status of a device."""
-        data = await self._api_request(
-            ACTION_QUERY_DEVICE_STATUS,
-            {"sn": device_sn, "pn": device_pn}
-        )
-        if data.get("desc") == "ERR_NO_RECORD":
+        try:
+            data = await self._api_request(
+                ACTION_QUERY_DEVICE_STATUS,
+                {"sn": device_sn, "pn": device_pn}
+            )
+            if data.get("desc") in ("ERR_NO_RECORD", "ERR_FORMAT_ERROR"):
+                return "unknown"
+            return data.get("dat", {}).get("status", "unknown")
+        except Exception as err:
+            _LOGGER.debug("Failed to get device status for %s: %s", device_sn, err)
             return "unknown"
-        return data.get("dat", {}).get("status", "unknown")
 
     async def get_collectors(self, plant_id: str) -> list[dict[str, Any]]:
         """Get list of dataloggers/collectors for a plant."""
@@ -331,13 +339,17 @@ class ShineMonitorAPIClient:
 
     async def get_collector_status(self, collector_sn: str, collector_pn: str) -> str:
         """Get status of a datalogger."""
-        data = await self._api_request(
-            ACTION_QUERY_COLLECTOR_STATUS,
-            {"sn": collector_sn, "pn": collector_pn}
-        )
-        if data.get("desc") == "ERR_NO_RECORD":
+        try:
+            data = await self._api_request(
+                ACTION_QUERY_COLLECTOR_STATUS,
+                {"sn": collector_sn, "pn": collector_pn}
+            )
+            if data.get("desc") in ("ERR_NO_RECORD", "ERR_FORMAT_ERROR"):
+                return "unknown"
+            return data.get("dat", {}).get("status", "unknown")
+        except Exception as err:
+            _LOGGER.debug("Failed to get collector status for %s: %s", collector_sn, err)
             return "unknown"
-        return data.get("dat", {}).get("status", "unknown")
 
     async def get_energy_month_per_day(
         self, plant_id: str, year: int, month: int
