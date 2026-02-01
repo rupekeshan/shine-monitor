@@ -421,30 +421,34 @@ class ShineMonitorAPIClient:
             ACTION_QUERY_PLANT_ENERGY_YEAR_PER_MONTH,
             {"plantid": plant_id, "date": str(year)}
         )
+        _LOGGER.debug("get_energy_month response for %d: %s", year, data)
+        
         if data.get("desc") == "ERR_NO_RECORD":
             return 0.0
         
-        # Response contains permonth array with ts (month number) and val (energy)
+        # Response contains permonth array with ts like "2024-12-01 00:00:00" and val (energy)
         monthly_data = data.get("dat", {}).get("permonth", [])
+        _LOGGER.debug("permonth data: %s", monthly_data)
+        
         for month_record in monthly_data:
             try:
-                # ts field contains month like "2024-07" or just the month "7"
+                # ts field format: "2024-12-01 00:00:00"
                 ts = str(month_record.get("ts", ""))
                 month_val = month_record.get("val", 0)
                 
-                # Parse the month from ts
-                if "-" in ts:
-                    # Format: "2024-07"
-                    record_month = int(ts.split("-")[1])
-                else:
-                    # Format: just month number
-                    record_month = int(ts)
-                
-                if record_month == month:
-                    return float(month_val)
-            except (ValueError, TypeError):
+                # Parse the month from ts - format is YYYY-MM-DD HH:MM:SS
+                if ts:
+                    date_part = ts.split(" ")[0]  # Get "2024-12-01"
+                    parts = date_part.split("-")
+                    if len(parts) >= 2:
+                        record_month = int(parts[1])
+                        if record_month == month:
+                            _LOGGER.debug("Found month %d: val=%.1f", month, float(month_val))
+                            return float(month_val)
+            except (ValueError, TypeError, IndexError):
                 continue
         
+        _LOGGER.debug("Month %d not found in data", month)
         return 0.0
 
 

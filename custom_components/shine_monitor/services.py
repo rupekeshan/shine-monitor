@@ -102,8 +102,13 @@ async def _import_history_for_plant(
     unique_id = f"{plant_id}_total_energy"
     entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, unique_id)
     
+    _LOGGER.info("Looking for entity with unique_id: %s, found: %s", unique_id, entity_id)
+    
     if not entity_id:
         _LOGGER.error("Could not find total_energy sensor for plant %s (unique_id: %s)", plant_name, unique_id)
+        # Try to list all shine_monitor entities for debugging
+        all_entities = ent_reg.entities.get_entries_for_domain(DOMAIN)
+        _LOGGER.error("Available shine_monitor entities: %s", [(e.entity_id, e.unique_id) for e in all_entities])
         return
     
     _LOGGER.info("Importing history into sensor: %s", entity_id)
@@ -155,9 +160,11 @@ async def _import_history_for_plant(
         try:
             # Get monthly total from API (more accurate)
             monthly_total = await client.get_energy_month(plant_id, year, month)
+            _LOGGER.info("Month %d-%02d: got monthly_total=%.1f from API", year, month, monthly_total)
             
             # Get daily data
             daily_data = await client.get_energy_month_per_day(plant_id, year, month)
+            _LOGGER.info("Month %d-%02d: got %d daily records", year, month, len(daily_data))
             
             # Parse daily data into a dict: day_of_month -> energy
             daily_values: dict[int, float] = {}
@@ -280,7 +287,12 @@ async def _import_history_for_plant(
             "Importing %d daily statistics for plant %s into %s (total: %.1f kWh)", 
             len(statistics), plant_name, statistic_id, cumulative_sum
         )
-        async_import_statistics(hass, metadata, statistics)
+        _LOGGER.info("First statistic: %s, Last statistic: %s", statistics[0], statistics[-1])
+        try:
+            async_import_statistics(hass, metadata, statistics)
+            _LOGGER.info("async_import_statistics completed successfully for plant %s", plant_name)
+        except Exception as err:
+            _LOGGER.error("Error calling async_import_statistics: %s", err, exc_info=True)
         _LOGGER.info("History import completed for plant %s", plant_name)
     else:
         _LOGGER.warning("No historical data found for plant %s", plant_name)
