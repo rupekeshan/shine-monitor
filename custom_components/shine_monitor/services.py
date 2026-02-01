@@ -96,6 +96,7 @@ async def _import_history_for_plant(
     metadata = StatisticMetaData(
         has_mean=False,
         has_sum=True,
+        mean_type=None,
         name=f"{plant_name} Daily Energy (Historical)",
         source=DOMAIN,
         statistic_id=statistic_id,
@@ -191,6 +192,7 @@ async def import_monthly_statistics(
     metadata = StatisticMetaData(
         has_mean=False,
         has_sum=True,
+        mean_type=None,
         name=f"{plant_name} Monthly Energy (Historical)",
         source=DOMAIN,
         statistic_id=statistic_id,
