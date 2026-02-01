@@ -85,13 +85,13 @@ async def _import_history_for_plant(
 
     _LOGGER.info("Starting history import for plant %s (%s)", plant_name, plant_id)
 
-    # Find the sensor's entity_id from the entity registry
+    # Find the total_energy sensor's entity_id from the entity registry
     ent_reg = er.async_get(hass)
-    unique_id = f"{plant_id}_daily_energy"
+    unique_id = f"{plant_id}_total_energy"
     entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, unique_id)
     
     if not entity_id:
-        _LOGGER.error("Could not find daily energy sensor for plant %s (unique_id: %s)", plant_name, unique_id)
+        _LOGGER.error("Could not find total_energy sensor for plant %s (unique_id: %s)", plant_name, unique_id)
         return
     
     _LOGGER.info("Importing history into sensor: %s", entity_id)
@@ -107,15 +107,14 @@ async def _import_history_for_plant(
         start_dt = datetime.datetime.combine(start_date, datetime.time.min)
         start_dt = dt_util.as_local(start_dt)
     
-    # Use the sensor's entity_id as the statistic_id
+    # Use sensor entity_id as statistic_id with recorder source
     statistic_id = entity_id
     
-    # Build metadata kwargs - handle both old and new HA versions
-    # Source must be "recorder" when importing into an existing sensor's statistics
+    # Build metadata for sensor statistics
     metadata_kwargs = {
         "has_mean": False,
         "has_sum": True,
-        "name": f"{plant_name} Daily Energy",
+        "name": f"{plant_name} Total Energy",
         "source": "recorder",
         "statistic_id": statistic_id,
         "unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR,
@@ -157,25 +156,29 @@ async def _import_history_for_plant(
                     day_str = day_str.split(" ")[0]  # Take just the date part
                     day_date = datetime.datetime.strptime(day_str, "%Y-%m-%d")
                     
+                    # Skip future dates
+                    if day_date.date() > now.date():
+                        continue
+                    
                     # API uses 'val' field for energy value
                     day_energy = float(day_record.get("val") or day_record.get("energy") or day_record.get("value") or 0)
                     
-                    if day_energy > 0:
-                        cumulative_sum += day_energy
-                        
-                        # Create statistic for this day - must be at top of hour in UTC
-                        stat_time = datetime.datetime(
-                            day_date.year, day_date.month, day_date.day,
-                            0, 0, 0, tzinfo=datetime.timezone.utc
+                    # Always add to cumulative sum and create entry (even for 0)
+                    cumulative_sum += day_energy
+                    
+                    # Create statistic for this day - must be at top of hour in UTC
+                    stat_time = datetime.datetime(
+                        day_date.year, day_date.month, day_date.day,
+                        0, 0, 0, tzinfo=datetime.timezone.utc
+                    )
+                    
+                    statistics.append(
+                        StatisticData(
+                            start=stat_time,
+                            sum=cumulative_sum,
+                            state=day_energy,
                         )
-                        
-                        statistics.append(
-                            StatisticData(
-                                start=stat_time,
-                                sum=cumulative_sum,
-                                state=day_energy,
-                            )
-                        )
+                    )
                 except (ValueError, KeyError) as err:
                     _LOGGER.debug("Error parsing day record: %s", err)
                     continue
@@ -192,7 +195,8 @@ async def _import_history_for_plant(
     # Import the statistics into the sensor
     if statistics:
         _LOGGER.info(
-            "Importing %d daily statistics for plant %s into %s", len(statistics), plant_name, statistic_id
+            "Importing %d daily statistics for plant %s into %s (total: %.1f kWh)", 
+            len(statistics), plant_name, statistic_id, cumulative_sum
         )
         async_import_statistics(hass, metadata, statistics)
         _LOGGER.info("History import completed for plant %s", plant_name)
