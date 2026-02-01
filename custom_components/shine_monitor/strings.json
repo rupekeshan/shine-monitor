@@ -1,0 +1,113 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Shine Monitor Credentials",
+        "description": "Enter your Shine Monitor account credentials. You can find your Company Key in the network requests when logging into the Shine Monitor web portal.",
+        "data": {
+          "username": "Username",
+          "password": "Password",
+          "company_key": "Company Key"
+        }
+      },
+      "plant": {
+        "title": "Select Plant",
+        "description": "Select the solar plant you want to monitor.",
+        "data": {
+          "plant": "Plant"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to Shine Monitor API",
+      "auth_failed": "Authentication failed. Please check your credentials.",
+      "no_plants": "No plants found for this account",
+      "unknown": "An unexpected error occurred"
+    },
+    "abort": {
+      "already_configured": "This plant is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Shine Monitor Options",
+        "description": "Configure the integration settings.",
+        "data": {
+          "update_interval": "Update Interval (minutes)",
+          "currency": "Currency for Profit Display",
+          "enable_devices": "Enable Per-Device Sensors"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "current_power": {
+        "name": "Current Power"
+      },
+      "daily_energy": {
+        "name": "Daily Energy"
+      },
+      "monthly_energy": {
+        "name": "Monthly Energy"
+      },
+      "yearly_energy": {
+        "name": "Yearly Energy"
+      },
+      "total_energy": {
+        "name": "Total Energy"
+      },
+      "installed_capacity": {
+        "name": "Installed Capacity"
+      },
+      "warning_count": {
+        "name": "Active Alarms"
+      },
+      "daily_profit": {
+        "name": "Daily Profit"
+      },
+      "total_profit": {
+        "name": "Total Profit"
+      },
+      "daily_coal_saving": {
+        "name": "Daily Coal Saving"
+      },
+      "total_coal_saving": {
+        "name": "Total Coal Saving"
+      },
+      "daily_co2_reduction": {
+        "name": "Daily CO₂ Reduction"
+      },
+      "total_co2_reduction": {
+        "name": "Total CO₂ Reduction"
+      },
+      "daily_so2_reduction": {
+        "name": "Daily SO₂ Reduction"
+      },
+      "total_so2_reduction": {
+        "name": "Total SO₂ Reduction"
+      }
+    },
+    "binary_sensor": {
+      "has_alarms": {
+        "name": "Has Active Alarms"
+      },
+      "online": {
+        "name": "Online"
+      }
+    }
+  },
+  "services": {
+    "import_history": {
+      "name": "Import Historical Data",
+      "description": "Import historical energy production data from Shine Monitor cloud into Home Assistant's long-term statistics.",
+      "fields": {
+        "start_date": {
+          "name": "Start Date",
+          "description": "The date to start importing from. If not specified, imports all available data."
+        }
+      }
+    }
+  }
+}

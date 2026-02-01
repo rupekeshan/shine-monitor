@@ -1,0 +1,22 @@
+{
+    "domain": "shine_monitor",
+    "name": "Shine Monitor",
+    "version": "2.0.0",
+    "documentation": "https://github.com/rupekeshan/shine-monitor",
+    "issue_tracker": "https://github.com/rupekeshan/shine-monitor/issues",
+    "requirements": [
+        "aiohttp>=3.8.0"
+    ],
+    "dependencies": [
+        "recorder"
+    ],
+    "codeowners": [
+        "@rupekeshan"
+    ],
+    "iot_class": "cloud_polling",
+    "homeassistant": "2024.1.0",
+    "config_flow": true,
+    "loggers": [
+        "custom_components.shine_monitor"
+    ]
+}
