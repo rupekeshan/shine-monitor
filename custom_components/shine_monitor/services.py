@@ -11,9 +11,11 @@ from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.models import StatisticData, StatisticMetaData
 from homeassistant.components.recorder.statistics import (
     async_add_external_statistics,
+    async_import_statistics,
     get_last_statistics,
     statistics_during_period,
 )
+from homeassistant.helpers import entity_registry as er
 try:
     from homeassistant.components.recorder.models import StatisticMeanType
 except ImportError:
@@ -83,6 +85,17 @@ async def _import_history_for_plant(
 
     _LOGGER.info("Starting history import for plant %s (%s)", plant_name, plant_id)
 
+    # Find the sensor's entity_id from the entity registry
+    ent_reg = er.async_get(hass)
+    unique_id = f"{plant_id}_daily_energy"
+    entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, unique_id)
+    
+    if not entity_id:
+        _LOGGER.error("Could not find daily energy sensor for plant %s (unique_id: %s)", plant_name, unique_id)
+        return
+    
+    _LOGGER.info("Importing history into sensor: %s", entity_id)
+
     # Determine the date range
     now = dt_util.now()
     if start_date is None:
@@ -94,8 +107,8 @@ async def _import_history_for_plant(
         start_dt = datetime.datetime.combine(start_date, datetime.time.min)
         start_dt = dt_util.as_local(start_dt)
     
-    # Create statistic metadata
-    statistic_id = f"{DOMAIN}:plant_{plant_id}_daily_energy"
+    # Use the sensor's entity_id as the statistic_id
+    statistic_id = entity_id
     
     # Build metadata kwargs - handle both old and new HA versions
     metadata_kwargs = {
@@ -175,12 +188,12 @@ async def _import_history_for_plant(
         else:
             current_date = current_date.replace(month=month + 1)
 
-    # Import the statistics
+    # Import the statistics into the sensor
     if statistics:
         _LOGGER.info(
-            "Importing %d daily statistics for plant %s", len(statistics), plant_name
+            "Importing %d daily statistics for plant %s into %s", len(statistics), plant_name, statistic_id
         )
-        async_add_external_statistics(hass, metadata, statistics)
+        async_import_statistics(hass, metadata, statistics)
         _LOGGER.info("History import completed for plant %s", plant_name)
     else:
         _LOGGER.warning("No historical data found for plant %s", plant_name)
