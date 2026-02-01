@@ -14,6 +14,10 @@ from homeassistant.components.recorder.statistics import (
     get_last_statistics,
     statistics_during_period,
 )
+try:
+    from homeassistant.components.recorder.models import StatisticMeanType
+except ImportError:
+    StatisticMeanType = None
 from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
@@ -93,15 +97,22 @@ async def _import_history_for_plant(
     # Create statistic metadata
     statistic_id = f"{DOMAIN}:plant_{plant_id}_daily_energy"
     
-    metadata = StatisticMetaData(
-        has_mean=False,
-        has_sum=True,
-        mean_type=None,
-        name=f"{plant_name} Daily Energy (Historical)",
-        source=DOMAIN,
-        statistic_id=statistic_id,
-        unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-    )
+    # Build metadata kwargs - handle both old and new HA versions
+    metadata_kwargs = {
+        "has_mean": False,
+        "has_sum": True,
+        "name": f"{plant_name} Daily Energy (Historical)",
+        "source": DOMAIN,
+        "statistic_id": statistic_id,
+        "unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR,
+    }
+    # Add mean_type for HA 2026.11+ compatibility
+    if StatisticMeanType is not None:
+        metadata_kwargs["mean_type"] = StatisticMeanType.NONE
+    else:
+        metadata_kwargs["mean_type"] = None
+    
+    metadata = StatisticMetaData(**metadata_kwargs)
 
     statistics: list[StatisticData] = []
     cumulative_sum = 0.0
@@ -137,9 +148,9 @@ async def _import_history_for_plant(
                     if day_energy > 0:
                         cumulative_sum += day_energy
                         
-                        # Create statistic for this day
+                        # Create statistic for this day - must be at top of hour
                         stat_time = dt_util.as_utc(
-                            day_date.replace(hour=23, minute=59, second=59)
+                            day_date.replace(hour=0, minute=0, second=0, microsecond=0)
                         )
                         
                         statistics.append(
@@ -189,15 +200,21 @@ async def import_monthly_statistics(
 
     statistic_id = f"{DOMAIN}:plant_{plant_id}_monthly_energy"
     
-    metadata = StatisticMetaData(
-        has_mean=False,
-        has_sum=True,
-        mean_type=None,
-        name=f"{plant_name} Monthly Energy (Historical)",
-        source=DOMAIN,
-        statistic_id=statistic_id,
-        unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-    )
+    # Build metadata kwargs - handle both old and new HA versions
+    metadata_kwargs = {
+        "has_mean": False,
+        "has_sum": True,
+        "name": f"{plant_name} Monthly Energy (Historical)",
+        "source": DOMAIN,
+        "statistic_id": statistic_id,
+        "unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR,
+    }
+    if StatisticMeanType is not None:
+        metadata_kwargs["mean_type"] = StatisticMeanType.NONE
+    else:
+        metadata_kwargs["mean_type"] = None
+    
+    metadata = StatisticMetaData(**metadata_kwargs)
 
     statistics: list[StatisticData] = []
     cumulative_sum = 0.0
@@ -216,7 +233,7 @@ async def import_monthly_statistics(
                     if month_num > 0 and month_energy > 0:
                         cumulative_sum += month_energy
                         
-                        # Create timestamp for end of month
+                        # Create timestamp for end of month - must be at top of hour
                         if month_num == 12:
                             next_month = datetime.datetime(year + 1, 1, 1)
                         else:
@@ -224,7 +241,7 @@ async def import_monthly_statistics(
                         
                         end_of_month = next_month - timedelta(days=1)
                         stat_time = dt_util.as_utc(
-                            end_of_month.replace(hour=23, minute=59, second=59)
+                            end_of_month.replace(hour=0, minute=0, second=0, microsecond=0)
                         )
                         
                         statistics.append(
