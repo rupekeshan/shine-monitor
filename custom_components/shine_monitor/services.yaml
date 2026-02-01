@@ -9,7 +9,7 @@ import_history:
       name: Start Date
       description: >-
         The date to start importing from. If not specified, imports all 
-        available data (up to 2 years back).
+        available data from the beginning.
       required: false
       example: "2023-01-01"
       selector:

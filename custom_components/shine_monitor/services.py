@@ -1,8 +1,9 @@
 """Services for Shine Monitor integration."""
 from __future__ import annotations
 
+import datetime
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 import voluptuous as vol
@@ -69,7 +70,7 @@ async def async_unload_services(hass: HomeAssistant) -> None:
 async def _import_history_for_plant(
     hass: HomeAssistant,
     coordinator: ShineMonitorDataUpdateCoordinator,
-    start_date: datetime | None = None,
+    start_date: datetime.date | None = None,
 ) -> None:
     """Import historical data for a specific plant."""
     plant_id = coordinator.plant_id
@@ -81,8 +82,13 @@ async def _import_history_for_plant(
     # Determine the date range
     now = dt_util.now()
     if start_date is None:
-        # Default to 2 years ago
-        start_date = now - timedelta(days=730)
+        # Default to 2015 to fetch all available data
+        start_dt = datetime.datetime(2015, 1, 1)
+        start_dt = dt_util.as_local(start_dt)
+    else:
+        # Convert date to datetime if needed
+        start_dt = datetime.datetime.combine(start_date, datetime.time.min)
+        start_dt = dt_util.as_local(start_dt)
     
     # Create statistic metadata
     statistic_id = f"{DOMAIN}:plant_{plant_id}_daily_energy"
@@ -100,7 +106,7 @@ async def _import_history_for_plant(
     cumulative_sum = 0.0
 
     # Iterate through each month from start_date to now
-    current_date = start_date.replace(day=1)
+    current_date = start_dt.replace(day=1)
     
     while current_date <= now:
         year = current_date.year
@@ -119,7 +125,7 @@ async def _import_history_for_plant(
                         continue
                     
                     # API returns date as "YYYY-MM-DD" or similar
-                    day_date = datetime.strptime(day_str, "%Y-%m-%d")
+                    day_date = datetime.datetime.strptime(day_str, "%Y-%m-%d")
                     day_energy = float(day_record.get("energy", 0))
                     
                     if day_energy > 0:
@@ -205,9 +211,9 @@ async def import_monthly_statistics(
                         
                         # Create timestamp for end of month
                         if month_num == 12:
-                            next_month = datetime(year + 1, 1, 1)
+                            next_month = datetime.datetime(year + 1, 1, 1)
                         else:
-                            next_month = datetime(year, month_num + 1, 1)
+                            next_month = datetime.datetime(year, month_num + 1, 1)
                         
                         end_of_month = next_month - timedelta(days=1)
                         stat_time = dt_util.as_utc(
