@@ -111,11 +111,12 @@ async def _import_history_for_plant(
     statistic_id = entity_id
     
     # Build metadata kwargs - handle both old and new HA versions
+    # Source must be "recorder" when importing into an existing sensor's statistics
     metadata_kwargs = {
         "has_mean": False,
         "has_sum": True,
-        "name": f"{plant_name} Daily Energy (Historical)",
-        "source": DOMAIN,
+        "name": f"{plant_name} Daily Energy",
+        "source": "recorder",
         "statistic_id": statistic_id,
         "unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR,
         "unit_class": "energy",
