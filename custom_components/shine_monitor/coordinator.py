@@ -244,12 +244,17 @@ class ShineMonitorAPIClient:
             ACTION_QUERY_PLANT_ENERGY_TOTAL,
             {"plantid": plant_id}
         )
+        _LOGGER.debug("Total energy API response for plant %s: %s", plant_id, data)
         if data.get("desc") == "ERR_NO_RECORD":
+            _LOGGER.warning("Total energy returned ERR_NO_RECORD for plant %s", plant_id)
             return None  # Return None, not 0, to prevent TOTAL_INCREASING reset
         energy = data.get("dat", {}).get("energy")
         if energy is None:
+            _LOGGER.warning("Total energy has no energy field for plant %s: %s", plant_id, data)
             return None
-        return float(energy)
+        result = float(energy)
+        _LOGGER.debug("Total energy for plant %s: %.2f kWh", plant_id, result)
+        return result
 
     async def get_profit_data(self, plant_id: str, daily_energy: float = 0) -> dict[str, float]:
         """Get profit and environmental data for today."""
@@ -594,6 +599,11 @@ class ShineMonitorDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             yearly_energy = await self.client.get_yearly_energy(self.plant_id)
             total_energy = await self.client.get_total_energy(self.plant_id)
             
+            _LOGGER.debug(
+                "Raw API values - power: %.2f, daily: %.2f, monthly: %s, yearly: %s, total: %s",
+                current_power, daily_energy, monthly_energy, yearly_energy, total_energy
+            )
+            
             # For cumulative sensors (TOTAL_INCREASING), preserve last known good values
             # to prevent statistics corruption from API errors or temporary glitches
             if total_energy is not None:
@@ -672,6 +682,11 @@ class ShineMonitorDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 DATA_INSTALLED_CAPACITY: installed_capacity,
                 DATA_LAST_UPDATED: dt_util.now().isoformat(),
             }
+            
+            _LOGGER.info(
+                "Coordinator update complete - Total Energy: %s kWh, Daily: %.2f kWh, Power: %.2f kW",
+                total_energy, daily_energy or 0, current_power
+            )
 
             # Fetch device-level data if enabled
             if self._enable_devices:
