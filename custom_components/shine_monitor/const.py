@@ -111,6 +111,22 @@ DATA_DEVICES = "devices"
 DATA_DATALOGGERS = "dataloggers"
 DATA_WARNING_COUNT = "warning_count"
 DATA_INSTALLED_CAPACITY = "installed_capacity"
+DATA_INVERTER_FAULT_COUNT = "inverter_fault_count"
+DATA_GRID_FAULT_COUNT = "grid_fault_count"
+DATA_LATEST_ALARM = "latest_alarm"
+DATA_LATEST_INVERTER_FAULT = "latest_inverter_fault"
+
+# Grid-related alarm codes (power cuts, grid issues - can be ignored)
+# These are normal events in areas with unreliable power
+GRID_FAULT_CODES = {
+    "0x00000009",  # No utility fault (grid down / power cut)
+    "0x0000000A",  # Grid voltage over fault
+    "0x0000000B",  # Grid voltage under fault  
+    "0x0000000C",  # Grid frequency over fault
+    "0x0000000D",  # Grid frequency under fault
+    "0x00000011",  # No grid connection
+    "0x00000012",  # Grid lost
+}
 
 # Service names
 SERVICE_IMPORT_HISTORY = "import_history"

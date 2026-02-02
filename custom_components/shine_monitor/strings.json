@@ -64,6 +64,15 @@
       "warning_count": {
         "name": "Active Alarms"
       },
+      "unhandled_warning_count": {
+        "name": "Unhandled Alarms"
+      },
+      "inverter_alarms": {
+        "name": "Inverter Alarms"
+      },
+      "grid_alarms": {
+        "name": "Grid Fault Alarms"
+      },
       "daily_profit": {
         "name": "Daily Profit"
       },
@@ -92,6 +101,9 @@
     "binary_sensor": {
       "has_alarms": {
         "name": "Has Active Alarms"
+      },
+      "has_inverter_alarms": {
+        "name": "Has Inverter Alarms"
       },
       "online": {
         "name": "Online"

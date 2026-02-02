@@ -1,0 +1,105 @@
+alias: Solar Notification
+description: "Real-time solar system monitoring with smart alerts"
+triggers:
+  # WiFi/connection lost - 30 min grace period to ignore DNS hiccups
+  - trigger: state
+    entity_id: sensor.current_solar_production
+    to: "unavailable"
+    for: "00:30:00"
+    id: wifi_down
+
+  # Real inverter alarm (excludes grid faults/power cuts)
+  - trigger: state
+    entity_id: binary_sensor.solar_plant_rupekeshan_has_inverter_alarms
+    to: "on"
+    id: inverter_alarm
+
+  # Daily summary check at sunset
+  - trigger: sun
+    event: sunset
+    offset: "-01:00:00"
+    id: daily_check
+
+conditions:
+  # Only alert during daytime
+  - condition: sun
+    after: sunrise
+    before: sunset
+
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: wifi_down
+        sequence:
+          - action: notify.alexa_media_rupekeshan_s_echo_dot
+            data:
+              message: "Solar alert. The Shine Monitor data is missing. Please check your terrace WiFi."
+              data:
+                type: tts
+          - action: notify.family_phones
+            data:
+              title: "Solar WiFi Down"
+              message: "Shine Monitor offline for 30+ minutes. Check terrace WiFi."
+              data:
+                priority: high
+                ttl: 0
+
+      - conditions:
+          - condition: trigger
+            id: inverter_alarm
+        sequence:
+          - action: notify.alexa_media_rupekeshan_s_echo_dot
+            data:
+              message: "Solar alert. The inverter has a fault. Check the display for an error code."
+              data:
+                type: tts
+          - action: notify.family_phones
+            data:
+              title: "⚠️ Inverter Alarm"
+              message: "Real inverter fault detected. Check display for error code."
+              data:
+                priority: high
+                ttl: 0
+
+      - conditions:
+          - condition: trigger
+            id: daily_check
+          - condition: numeric_state
+            entity_id: sensor.solar_plant_rupekeshan_daily_energy
+            below: 0.1
+        sequence:
+          - action: notify.alexa_media_rupekeshan_s_echo_dot
+            data:
+              message: "Solar alert. The inverter produced zero power today. Check for an error on the display."
+              data:
+                type: tts
+          - action: notify.family_phones
+            data:
+              title: "Zero Solar Production"
+              message: "Inverter produced 0 kWh today. Check for errors."
+
+---
+alias: Solar Daily Reading Announcement
+description: "Announce daily solar production summary on Alexa at sunset"
+triggers:
+  - trigger: sun
+    event: sunset
+    offset: "-00:30:00"
+
+actions:
+  - action: notify.alexa_media_rupekeshan_s_echo_dot
+    data:
+      message: >
+        Today your solar panels produced 
+        {{ states('sensor.solar_plant_rupekeshan_daily_energy') | round(1) }} kilowatt hours.
+        This month you have generated 
+        {{ states('sensor.solar_plant_rupekeshan_monthly_energy') | round(1) }} kilowatt hours.
+      data:
+        type: tts
+  - action: notify.family_phones
+    data:
+      title: "Daily Solar Report"
+      message: >
+        Today: {{ states('sensor.solar_plant_rupekeshan_daily_energy') | round(1) }} kWh
+        This month: {{ states('sensor.solar_plant_rupekeshan_monthly_energy') | round(1) }} kWh

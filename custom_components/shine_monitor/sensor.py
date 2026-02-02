@@ -43,6 +43,8 @@ from .const import (
     DATA_WARNING_COUNT,
     DATA_INSTALLED_CAPACITY,
     DATA_DEVICES,
+    DATA_INVERTER_ALARMS,
+    DATA_GRID_ALARMS,
     ICON_SOLAR_POWER,
     ICON_ENERGY,
     ICON_PROFIT,
@@ -151,6 +153,22 @@ PLANT_SENSORS: tuple[ShineMonitorSensorEntityDescription, ...] = (
         icon=ICON_WARNING,
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda data: data.get("unhandled_warning_count"),
+    ),
+    ShineMonitorSensorEntityDescription(
+        key="inverter_alarms",
+        translation_key="inverter_alarms",
+        name="Inverter Alarms",
+        icon=ICON_WARNING,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda data: data.get(DATA_INVERTER_ALARMS, 0),
+    ),
+    ShineMonitorSensorEntityDescription(
+        key="grid_alarms",
+        translation_key="grid_alarms",
+        name="Grid Fault Alarms",
+        icon=ICON_WARNING,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda data: data.get(DATA_GRID_ALARMS, 0),
     ),
 )
 

@@ -38,6 +38,7 @@ from .const import (
     ACTION_QUERY_COLLECTOR_STATUS,
     CONF_ENABLE_DEVICES,
     DEFAULT_ENABLE_DEVICES,
+    GRID_FAULT_CODES,
     DATA_CURRENT_POWER,
     DATA_DAILY_ENERGY,
     DATA_MONTHLY_ENERGY,
@@ -52,6 +53,10 @@ from .const import (
     DATA_DATALOGGERS,
     DATA_WARNING_COUNT,
     DATA_INSTALLED_CAPACITY,
+    DATA_INVERTER_FAULT_COUNT,
+    DATA_GRID_FAULT_COUNT,
+    DATA_LATEST_ALARM,
+    DATA_LATEST_INVERTER_FAULT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -302,6 +307,55 @@ class ShineMonitorAPIClient:
         unhandled = sum(1 for w in warnings if not w.get("handle", True))
         return unhandled
 
+    async def get_alarm_summary(self, plant_id: str) -> dict[str, Any]:
+        """Get categorized alarm summary - separates grid faults from inverter faults.
+        
+        Returns:
+            dict with:
+            - inverter_fault_count: Real inverter issues needing attention
+            - grid_fault_count: Grid/power cut issues (usually ignorable)
+            - latest_alarm: Most recent alarm description
+            - latest_inverter_fault: Most recent non-grid fault (if any)
+        """
+        data = await self._api_request(
+            "queryPlantWarning",
+            {"plantid": plant_id, "pagesize": 50}  # Get recent 50 alarms
+        )
+        
+        result = {
+            "inverter_fault_count": 0,
+            "grid_fault_count": 0,
+            "latest_alarm": None,
+            "latest_inverter_fault": None,
+        }
+        
+        if data.get("desc") == "ERR_NO_RECORD":
+            return result
+        
+        warnings = data.get("dat", {}).get("warning", [])
+        if not warnings:
+            return result
+        
+        # Most recent alarm (first in list)
+        result["latest_alarm"] = warnings[0].get("desc", "Unknown") if warnings else None
+        
+        # Categorize alarms
+        for warning in warnings:
+            # Only count unhandled (active) alarms
+            if warning.get("handle", True):
+                continue
+                
+            code = warning.get("code", "")
+            if code in GRID_FAULT_CODES:
+                result["grid_fault_count"] += 1
+            else:
+                result["inverter_fault_count"] += 1
+                # Track the most recent inverter fault
+                if result["latest_inverter_fault"] is None:
+                    result["latest_inverter_fault"] = warning.get("desc", "Unknown fault")
+        
+        return result
+
     async def get_installed_capacity(self, plant_id: str) -> float:
         """Get installed capacity (nominal power) for plant."""
         data = await self._api_request(
@@ -332,12 +386,12 @@ class ShineMonitorAPIClient:
             return []
         return data.get("dat", {}).get("device", [])
 
-    async def get_device_last_data(self, device_sn: str, device_pn: str) -> dict[str, Any]:
+    async def get_device_last_data(self, device_sn: str, device_pn: str, devcode: int = 0, devaddr: int = 0) -> dict[str, Any]:
         """Get latest data for a device."""
         try:
             data = await self._api_request(
                 ACTION_QUERY_DEVICE_LAST_DATA,
-                {"sn": device_sn, "pn": device_pn}
+                {"sn": device_sn, "pn": device_pn, "devcode": devcode, "devaddr": devaddr}
             )
             if data.get("desc") in ("ERR_NO_RECORD", "ERR_FORMAT_ERROR"):
                 return {}
@@ -346,14 +400,14 @@ class ShineMonitorAPIClient:
             _LOGGER.debug("Failed to get device data for %s: %s", device_sn, err)
             return {}
 
-    async def get_device_status(self, device_sn: str, device_pn: str) -> str:
+    async def get_device_status(self, device_sn: str, device_pn: str, devcode: int = 0, devaddr: int = 0) -> str:
         """Get status of a device."""
         try:
             data = await self._api_request(
                 ACTION_QUERY_DEVICE_STATUS,
-                {"sn": device_sn, "pn": device_pn}
+                {"sn": device_sn, "pn": device_pn, "devcode": devcode, "devaddr": devaddr}
             )
-            if data.get("desc") in ("ERR_NO_RECORD", "ERR_FORMAT_ERROR"):
+            if data.get("desc") in ("ERR_NO_RECORD", "ERR_FORMAT_ERROR", "ERR_MISSING_PARAMETER"):
                 return "unknown"
             return data.get("dat", {}).get("status", "unknown")
         except Exception as err:
@@ -518,6 +572,7 @@ class ShineMonitorDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             total_profit_data = await self.client.get_total_profit_data(self.plant_id, total_energy)
             warning_count = await self.client.get_warning_count(self.plant_id)
             unhandled_warning_count = await self.client.get_unhandled_warning_count(self.plant_id)
+            alarm_summary = await self.client.get_alarm_summary(self.plant_id)
             installed_capacity = await self.client.get_installed_capacity(self.plant_id)
 
             data: dict[str, Any] = {
@@ -536,6 +591,9 @@ class ShineMonitorDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "total_so2": total_profit_data.get("so2", 0),
                 DATA_WARNING_COUNT: warning_count,
                 "unhandled_warning_count": unhandled_warning_count,
+                DATA_INVERTER_ALARMS: alarm_summary.get("unhandled_inverter", 0),
+                DATA_GRID_ALARMS: alarm_summary.get("unhandled_grid", 0),
+                "latest_inverter_alarm": alarm_summary.get("latest_inverter_alarm"),
                 DATA_INSTALLED_CAPACITY: installed_capacity,
                 DATA_LAST_UPDATED: dt_util.now().isoformat(),
             }
@@ -547,9 +605,11 @@ class ShineMonitorDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 for device in devices:
                     device_sn = device.get("sn", "")
                     device_pn = device.get("pn", "")
+                    devcode = device.get("devcode", 0)
+                    devaddr = device.get("devaddr", 0)
                     if device_sn and device_pn:
-                        last_data = await self.client.get_device_last_data(device_sn, device_pn)
-                        status = await self.client.get_device_status(device_sn, device_pn)
+                        last_data = await self.client.get_device_last_data(device_sn, device_pn, devcode, devaddr)
+                        status = await self.client.get_device_status(device_sn, device_pn, devcode, devaddr)
                         device_data.append({
                             "sn": device_sn,
                             "pn": device_pn,
