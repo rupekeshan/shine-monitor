@@ -517,10 +517,27 @@ async def _import_power_history_for_plant(
                         if hour == 12:  # Log noon values for debugging
                             _LOGGER.debug("Hour 12 for %s: readings=%s, mean=%.3f kW", current_date, readings[:3], mean_power)
                         
-                        stat_time = datetime.datetime(
+                        # API timestamps are in local time, convert to UTC for statistics
+                        # HA requires timestamps at top of hour (minutes=0)
+                        local_time = datetime.datetime(
                             current_date.year, current_date.month, current_date.day,
-                            hour, 0, 0, tzinfo=datetime.timezone.utc
+                            hour, 0, 0
                         )
+                        # Use HA's timezone utility to convert local to UTC
+                        local_tz = dt_util.get_time_zone(hass.config.time_zone)
+                        if local_tz:
+                            local_time = local_time.replace(tzinfo=local_tz)
+                            utc_time = local_time.astimezone(datetime.timezone.utc)
+                            # Round to nearest hour (handle half-hour TZ offsets like IST +5:30)
+                            if utc_time.minute >= 30:
+                                utc_time = utc_time.replace(minute=0, second=0) + timedelta(hours=1)
+                            else:
+                                utc_time = utc_time.replace(minute=0, second=0)
+                            stat_time = utc_time
+                            if hour == 12:
+                                _LOGGER.debug("TZ conversion: local %s -> UTC %s", local_time, stat_time)
+                        else:
+                            stat_time = local_time.replace(tzinfo=datetime.timezone.utc)
                         
                         statistics.append(
                             StatisticData(
