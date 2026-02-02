@@ -20,9 +20,11 @@ from .const import (
     CONF_PLANT_NAME,
     CONF_TOKEN,
     CONF_SECRET,
+    CONF_IMPORT_HISTORY,
+    CONF_IMPORT_START_YEAR,
 )
 from .coordinator import ShineMonitorAPIClient, ShineMonitorDataUpdateCoordinator
-from .services import async_setup_services, async_unload_services
+from .services import async_setup_services, async_unload_services, import_history_during_setup
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -70,8 +72,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Store coordinator
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
-    # Set up platforms
+    # Set up platforms (creates sensors)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Import historical data AFTER sensors are created so we can import to the sensor's statistic
+    # This must run before the recorder creates its first hourly statistic
+    if entry.data.get(CONF_IMPORT_HISTORY, False):
+        _LOGGER.info("Import historical data requested during setup")
+        start_year = int(entry.data.get(CONF_IMPORT_START_YEAR, 2020))
+        try:
+            await import_history_during_setup(hass, coordinator, start_year)
+            _LOGGER.info("Historical data import completed")
+            
+            # Clear the import flag so it doesn't run again on reload
+            new_data = dict(entry.data)
+            new_data[CONF_IMPORT_HISTORY] = False
+            hass.config_entries.async_update_entry(entry, data=new_data)
+        except Exception as err:
+            _LOGGER.error("Failed to import historical data: %s", err)
+            # Continue setup even if import fails
 
     # Set up services (only once)
     if len(hass.data[DOMAIN]) == 1:

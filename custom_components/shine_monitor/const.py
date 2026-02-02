@@ -22,6 +22,10 @@ CONF_ENABLE_DEVICES = "enable_devices"
 DEFAULT_CURRENCY = "₹"
 DEFAULT_ENABLE_DEVICES = True
 
+# Import options
+CONF_IMPORT_HISTORY = "import_history"
+CONF_IMPORT_START_YEAR = "import_start_year"
+
 # Currency options
 CURRENCY_OPTIONS = {
     "₹": "Indian Rupee (₹)",

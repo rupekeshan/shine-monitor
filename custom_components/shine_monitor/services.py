@@ -34,7 +34,7 @@ from .const import (
     SERVICE_IMPORT_HISTORY,
     SERVICE_IMPORT_POWER_HISTORY,
 )
-from .coordinator import ShineMonitorDataUpdateCoordinator
+from .coordinator import ShineMonitorDataUpdateCoordinator, ShineMonitorAPIClient
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -126,15 +126,15 @@ async def _import_history_for_plant(
 
     _LOGGER.info("Starting history import for plant %s (%s)", plant_name, plant_id)
 
-    # Find the daily_energy sensor's entity_id from the entity registry
+    # Find the total_energy sensor's entity_id from the entity registry
     ent_reg = er.async_get(hass)
-    unique_id = f"{plant_id}_daily_energy"
+    unique_id = f"{plant_id}_total_energy"
     entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, unique_id)
     
     _LOGGER.info("Looking for entity with unique_id: %s, found: %s", unique_id, entity_id)
     
     if not entity_id:
-        _LOGGER.error("Could not find daily_energy sensor for plant %s (unique_id: %s)", plant_name, unique_id)
+        _LOGGER.error("Could not find total_energy sensor for plant %s (unique_id: %s)", plant_name, unique_id)
         # Try to list all shine_monitor entities for debugging
         all_entities = ent_reg.entities.get_entries_for_domain(DOMAIN)
         _LOGGER.error("Available shine_monitor entities: %s", [(e.entity_id, e.unique_id) for e in all_entities])
@@ -160,7 +160,7 @@ async def _import_history_for_plant(
     metadata_kwargs = {
         "has_mean": False,
         "has_sum": True,
-        "name": f"{plant_name} Daily Energy",
+        "name": f"{plant_name} Total Energy",
         "source": "recorder",
         "statistic_id": statistic_id,
         "unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR,
@@ -306,74 +306,22 @@ async def _import_history_for_plant(
             StatisticData(
                 start=stat_time,
                 sum=cumulative_sum,
-                state=day_energy,
+                state=cumulative_sum,  # For total_energy, state is the cumulative value
             )
         )
 
     # Import the statistics into the sensor
     if statistics:
         _LOGGER.info(
-            "Importing %d daily statistics for plant %s into %s (total: %.1f kWh)", 
+            "Importing %d statistics for plant %s into %s (total: %.1f kWh)", 
             len(statistics), plant_name, statistic_id, cumulative_sum
         )
         _LOGGER.info("First statistic: %s, Last statistic: %s", statistics[0], statistics[-1])
         try:
             async_import_statistics(hass, metadata, statistics)
-            _LOGGER.info("async_import_statistics completed successfully for plant %s", plant_name)
+            _LOGGER.info("History import completed successfully for plant %s", plant_name)
         except Exception as err:
             _LOGGER.error("Error calling async_import_statistics: %s", err, exc_info=True)
-        
-        # Also import cumulative totals to total_energy sensor for Energy Dashboard
-        total_energy_unique_id = f"{plant_id}_total_energy"
-        total_energy_entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, total_energy_unique_id)
-        
-        if total_energy_entity_id:
-            _LOGGER.info("Also importing cumulative data to total_energy sensor: %s", total_energy_entity_id)
-            
-            # Build metadata for total_energy
-            total_metadata_kwargs = {
-                "has_mean": False,
-                "has_sum": True,
-                "name": f"{plant_name} Total Energy",
-                "source": "recorder",
-                "statistic_id": total_energy_entity_id,
-                "unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR,
-                "unit_class": "energy",
-            }
-            if StatisticMeanType is not None:
-                total_metadata_kwargs["mean_type"] = StatisticMeanType.NONE
-            else:
-                total_metadata_kwargs["mean_type"] = None
-            
-            total_metadata = StatisticMetaData(**total_metadata_kwargs)
-            
-            # Build statistics with cumulative values (state = sum for total energy)
-            total_statistics: list[StatisticData] = []
-            running_total = 0.0
-            
-            for day_date, day_energy in all_daily_stats:
-                running_total += day_energy
-                stat_time = datetime.datetime(
-                    day_date.year, day_date.month, day_date.day,
-                    0, 0, 0, tzinfo=datetime.timezone.utc
-                )
-                total_statistics.append(
-                    StatisticData(
-                        start=stat_time,
-                        sum=running_total,
-                        state=running_total,  # For total energy, state IS the cumulative
-                    )
-                )
-            
-            try:
-                async_import_statistics(hass, total_metadata, total_statistics)
-                _LOGGER.info("Imported %d statistics to total_energy sensor", len(total_statistics))
-            except Exception as err:
-                _LOGGER.error("Error importing to total_energy: %s", err, exc_info=True)
-        else:
-            _LOGGER.warning("Could not find total_energy sensor (unique_id: %s)", total_energy_unique_id)
-        
-        _LOGGER.info("History import completed for plant %s", plant_name)
     else:
         _LOGGER.warning("No historical data found for plant %s", plant_name)
 
@@ -624,3 +572,16 @@ async def _import_power_history_for_plant(
             _LOGGER.error("Error importing power statistics: %s", err, exc_info=True)
     else:
         _LOGGER.warning("No power history data found for plant %s", plant_name)
+
+
+async def import_history_during_setup(
+    hass: HomeAssistant,
+    coordinator: ShineMonitorDataUpdateCoordinator,
+    start_year: int = 2020,
+) -> None:
+    """Import historical data during integration setup.
+    
+    Simple wrapper that calls the existing import function with a start date.
+    """
+    start_date = datetime.date(start_year, 1, 1)
+    await _import_history_for_plant(hass, coordinator, start_date)

@@ -22,6 +22,8 @@ from .const import (
     CONF_UPDATE_INTERVAL,
     CONF_CURRENCY,
     CONF_ENABLE_DEVICES,
+    CONF_IMPORT_HISTORY,
+    CONF_IMPORT_START_YEAR,
     DEFAULT_CURRENCY,
     DEFAULT_ENABLE_DEVICES,
     CURRENCY_OPTIONS,
@@ -48,6 +50,7 @@ class ShineMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
         """Initialize flow."""
         self.plants: list[dict[str, Any]] = []
         self.auth_info: dict[str, Any] = {}
+        self.selected_plant: dict[str, Any] | None = None
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -117,14 +120,9 @@ class ShineMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(str(selected_plant["pid"]))
                 self._abort_if_unique_id_configured()
 
-                return self.async_create_entry(
-                    title=f"Shine Monitor - {selected_plant['name']}",
-                    data={
-                        **self.auth_info,
-                        CONF_PLANT_ID: str(selected_plant["pid"]),
-                        CONF_PLANT_NAME: selected_plant["name"],
-                    },
-                )
+                # Store selected plant and proceed to import options
+                self.selected_plant = selected_plant
+                return await self.async_step_import_options()
 
         plant_options = {str(plant["pid"]): plant["name"] for plant in self.plants}
 
@@ -134,6 +132,41 @@ class ShineMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
                 {vol.Required("plant"): vol.In(plant_options)}
             ),
             errors=errors,
+        )
+
+    async def async_step_import_options(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle import options - ask if user wants to import historical data."""
+        import datetime
+        
+        if user_input is not None:
+            # Create entry with import preferences
+            return self.async_create_entry(
+                title=f"Shine Monitor - {self.selected_plant['name']}",
+                data={
+                    **self.auth_info,
+                    CONF_PLANT_ID: str(self.selected_plant["pid"]),
+                    CONF_PLANT_NAME: self.selected_plant["name"],
+                    CONF_IMPORT_HISTORY: user_input.get(CONF_IMPORT_HISTORY, False),
+                    CONF_IMPORT_START_YEAR: user_input.get(CONF_IMPORT_START_YEAR, 2020),
+                },
+            )
+
+        current_year = datetime.datetime.now().year
+        year_options = {str(y): str(y) for y in range(2015, current_year + 1)}
+
+        return self.async_show_form(
+            step_id="import_options",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_IMPORT_HISTORY, default=True): bool,
+                    vol.Optional(CONF_IMPORT_START_YEAR, default=2020): vol.In(year_options),
+                }
+            ),
+            description_placeholders={
+                "plant_name": self.selected_plant["name"],
+            },
         )
 
     @staticmethod
