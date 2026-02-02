@@ -322,6 +322,57 @@ async def _import_history_for_plant(
             _LOGGER.info("async_import_statistics completed successfully for plant %s", plant_name)
         except Exception as err:
             _LOGGER.error("Error calling async_import_statistics: %s", err, exc_info=True)
+        
+        # Also import cumulative totals to total_energy sensor for Energy Dashboard
+        total_energy_unique_id = f"{plant_id}_total_energy"
+        total_energy_entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, total_energy_unique_id)
+        
+        if total_energy_entity_id:
+            _LOGGER.info("Also importing cumulative data to total_energy sensor: %s", total_energy_entity_id)
+            
+            # Build metadata for total_energy
+            total_metadata_kwargs = {
+                "has_mean": False,
+                "has_sum": True,
+                "name": f"{plant_name} Total Energy",
+                "source": "recorder",
+                "statistic_id": total_energy_entity_id,
+                "unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR,
+                "unit_class": "energy",
+            }
+            if StatisticMeanType is not None:
+                total_metadata_kwargs["mean_type"] = StatisticMeanType.NONE
+            else:
+                total_metadata_kwargs["mean_type"] = None
+            
+            total_metadata = StatisticMetaData(**total_metadata_kwargs)
+            
+            # Build statistics with cumulative values (state = sum for total energy)
+            total_statistics: list[StatisticData] = []
+            running_total = 0.0
+            
+            for day_date, day_energy in all_daily_stats:
+                running_total += day_energy
+                stat_time = datetime.datetime(
+                    day_date.year, day_date.month, day_date.day,
+                    0, 0, 0, tzinfo=datetime.timezone.utc
+                )
+                total_statistics.append(
+                    StatisticData(
+                        start=stat_time,
+                        sum=running_total,
+                        state=running_total,  # For total energy, state IS the cumulative
+                    )
+                )
+            
+            try:
+                async_import_statistics(hass, total_metadata, total_statistics)
+                _LOGGER.info("Imported %d statistics to total_energy sensor", len(total_statistics))
+            except Exception as err:
+                _LOGGER.error("Error importing to total_energy: %s", err, exc_info=True)
+        else:
+            _LOGGER.warning("Could not find total_energy sensor (unique_id: %s)", total_energy_unique_id)
+        
         _LOGGER.info("History import completed for plant %s", plant_name)
     else:
         _LOGGER.warning("No historical data found for plant %s", plant_name)
