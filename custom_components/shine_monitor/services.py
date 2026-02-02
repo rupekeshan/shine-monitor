@@ -456,7 +456,7 @@ async def _import_power_history_for_plant(
         "name": f"{plant_name} Current Power",
         "source": "recorder",
         "statistic_id": statistic_id,
-        "unit_of_measurement": UnitOfPower.WATT,
+        "unit_of_measurement": UnitOfPower.KILO_WATT,  # Must match sensor unit
         "unit_class": "power",
     }
     if StatisticMeanType is not None:
@@ -481,6 +481,7 @@ async def _import_power_history_for_plant(
             
             if power_data:
                 _LOGGER.debug("Got %d power readings for %s", len(power_data), current_date)
+                _LOGGER.debug("Sample power reading: %s", power_data[0] if power_data else "none")
                 
                 # Group readings by hour and calculate mean
                 hourly_readings: dict[int, list[float]] = {h: [] for h in range(24)}
@@ -488,9 +489,11 @@ async def _import_power_history_for_plant(
                 for reading in power_data:
                     try:
                         ts = reading.get("ts") or reading.get("time") or ""
-                        power = float(reading.get("val") or reading.get("power") or reading.get("outputPower") or 0)
+                        # API returns power in Watts, convert to kW to match sensor
+                        power_w = float(reading.get("val") or reading.get("power") or reading.get("outputPower") or 0)
+                        power_kw = power_w / 1000.0  # Convert W to kW
                         
-                        if ts and power >= 0:
+                        if ts and power_kw >= 0:
                             # Parse timestamp to get hour
                             if " " in ts:
                                 time_part = ts.split(" ")[1]
@@ -499,7 +502,7 @@ async def _import_power_history_for_plant(
                                 # Might be just time
                                 hour = int(ts.split(":")[0])
                             
-                            hourly_readings[hour].append(power)
+                            hourly_readings[hour].append(power_kw)
                     except (ValueError, IndexError, TypeError):
                         continue
                 
@@ -510,6 +513,9 @@ async def _import_power_history_for_plant(
                         mean_power = sum(readings) / len(readings)
                         max_power = max(readings)
                         min_power = min(readings)
+                        
+                        if hour == 12:  # Log noon values for debugging
+                            _LOGGER.debug("Hour 12 for %s: readings=%s, mean=%.1f", current_date, readings[:3], mean_power)
                         
                         stat_time = datetime.datetime(
                             current_date.year, current_date.month, current_date.day,

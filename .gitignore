@@ -52,5 +52,4 @@ htmlcov/
 Thumbs.db
 
 # Project specific
-test_api.py
 *.log
