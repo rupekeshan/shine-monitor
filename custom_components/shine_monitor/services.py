@@ -420,7 +420,7 @@ async def _import_power_history_for_plant(
     """Import power history for the last N days.
     
     Fetches 5-minute power readings from the API for each day,
-    aggregates to 15-minute intervals for good resolution with reasonable storage.
+    aggregates to hourly (HA statistics requires hourly timestamps).
     """
     from homeassistant.const import UnitOfPower
     
@@ -466,7 +466,7 @@ async def _import_power_history_for_plant(
     
     metadata = StatisticMetaData(**metadata_kwargs)
 
-    # Collect all 15-minute power stats
+    # Collect all hourly power stats (HA requires hourly timestamps)
     statistics: list[StatisticData] = []
     
     current_date = start_date
@@ -485,62 +485,51 @@ async def _import_power_history_for_plant(
                 noon_sample = next((r for r in power_data if r.get("ts", "").find("12:") > 0), power_data[0])
                 _LOGGER.debug("Sample power reading (raw): %s", noon_sample)
                 
-                # Group readings by 15-minute intervals (96 intervals per day)
-                # Key is (hour, quarter) where quarter is 0, 1, 2, or 3
-                interval_readings: dict[tuple[int, int], list[float]] = {}
-                for h in range(24):
-                    for q in range(4):
-                        interval_readings[(h, q)] = []
+                # Group readings by hour
+                hourly_readings: dict[int, list[float]] = {h: [] for h in range(24)}
                 
                 for reading in power_data:
                     try:
                         ts = reading.get("ts") or reading.get("time") or ""
-                        # API returns power in kW already (based on observed values)
+                        # API returns power in kW already
                         power_kw = float(reading.get("val") or reading.get("power") or reading.get("outputPower") or 0)
                         
                         if ts and power_kw >= 0:
-                            # Parse timestamp to get hour and minute
+                            # Parse timestamp to get hour
                             if " " in ts:
                                 time_part = ts.split(" ")[1]
-                                parts = time_part.split(":")
-                                hour = int(parts[0])
-                                minute = int(parts[1])
+                                hour = int(time_part.split(":")[0])
                             else:
-                                parts = ts.split(":")
-                                hour = int(parts[0])
-                                minute = int(parts[1]) if len(parts) > 1 else 0
+                                hour = int(ts.split(":")[0])
                             
-                            # Determine which 15-minute quarter (0-3)
-                            quarter = minute // 15
-                            interval_readings[(hour, quarter)].append(power_kw)
+                            hourly_readings[hour].append(power_kw)
                     except (ValueError, IndexError, TypeError):
                         continue
                 
-                # Create 15-minute statistics
+                # Create hourly statistics
                 for hour in range(24):
-                    for quarter in range(4):
-                        readings = interval_readings[(hour, quarter)]
-                        if readings:
-                            mean_power = sum(readings) / len(readings)
-                            max_power = max(readings)
-                            min_power = min(readings)
-                            
-                            if hour == 12 and quarter == 0:  # Log 12:00 values for debugging
-                                _LOGGER.debug("12:00 for %s: readings=%s, mean=%.3f kW", current_date, readings, mean_power)
-                            
-                            stat_time = datetime.datetime(
-                                current_date.year, current_date.month, current_date.day,
-                                hour, quarter * 15, 0, tzinfo=datetime.timezone.utc
+                    readings = hourly_readings[hour]
+                    if readings:
+                        mean_power = sum(readings) / len(readings)
+                        max_power = max(readings)
+                        min_power = min(readings)
+                        
+                        if hour == 12:  # Log noon values for debugging
+                            _LOGGER.debug("Hour 12 for %s: readings=%s, mean=%.3f kW", current_date, readings[:3], mean_power)
+                        
+                        stat_time = datetime.datetime(
+                            current_date.year, current_date.month, current_date.day,
+                            hour, 0, 0, tzinfo=datetime.timezone.utc
+                        )
+                        
+                        statistics.append(
+                            StatisticData(
+                                start=stat_time,
+                                mean=mean_power,
+                                max=max_power,
+                                min=min_power,
                             )
-                            
-                            statistics.append(
-                                StatisticData(
-                                    start=stat_time,
-                                    mean=mean_power,
-                                    max=max_power,
-                                    min=min_power,
-                                )
-                            )
+                        )
             
             days_processed += 1
             if days_processed % 10 == 0:
@@ -557,7 +546,7 @@ async def _import_power_history_for_plant(
     # Import the statistics into the sensor
     if statistics:
         _LOGGER.info(
-            "Importing %d 15-minute power statistics for plant %s into %s", 
+            "Importing %d hourly power statistics for plant %s into %s", 
             len(statistics), plant_name, statistic_id
         )
         try:
