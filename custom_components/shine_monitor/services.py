@@ -296,12 +296,24 @@ async def _import_history_for_plant(
     statistics: list[StatisticData] = []
     cumulative_sum = 0.0
     
+    # Get user's timezone for proper timestamp alignment
+    local_tz = dt_util.get_time_zone(hass.config.time_zone)
+    
     for day_date, day_energy in all_daily_stats:
         cumulative_sum += day_energy
-        stat_time = datetime.datetime(
+        
+        # Create timestamp at local midnight, then convert to UTC
+        # This ensures statistics align with the user's day boundaries
+        local_midnight = datetime.datetime(
             day_date.year, day_date.month, day_date.day,
-            0, 0, 0, tzinfo=datetime.timezone.utc
+            0, 0, 0
         )
+        if local_tz:
+            local_midnight = local_midnight.replace(tzinfo=local_tz)
+            stat_time = local_midnight.astimezone(datetime.timezone.utc)
+        else:
+            stat_time = local_midnight.replace(tzinfo=datetime.timezone.utc)
+        
         statistics.append(
             StatisticData(
                 start=stat_time,
