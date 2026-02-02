@@ -203,35 +203,53 @@ class ShineMonitorAPIClient:
             return 0.0
         return float(data.get("dat", {}).get("energy", 0))
 
-    async def get_monthly_energy(self, plant_id: str) -> float:
-        """Get monthly energy production."""
+    async def get_monthly_energy(self, plant_id: str) -> float | None:
+        """Get monthly energy production.
+        
+        Returns None on error to prevent statistics corruption.
+        """
         data = await self._api_request(
             ACTION_QUERY_PLANT_ENERGY_MONTH,
             {"plantid": plant_id}
         )
         if data.get("desc") == "ERR_NO_RECORD":
-            return 0.0
-        return float(data.get("dat", {}).get("energy", 0))
+            return None
+        energy = data.get("dat", {}).get("energy")
+        if energy is None:
+            return None
+        return float(energy)
 
-    async def get_yearly_energy(self, plant_id: str) -> float:
-        """Get yearly energy production."""
+    async def get_yearly_energy(self, plant_id: str) -> float | None:
+        """Get yearly energy production.
+        
+        Returns None on error to prevent statistics corruption for TOTAL_INCREASING sensors.
+        """
         data = await self._api_request(
             ACTION_QUERY_PLANT_ENERGY_YEAR,
             {"plantid": plant_id}
         )
         if data.get("desc") == "ERR_NO_RECORD":
-            return 0.0
-        return float(data.get("dat", {}).get("energy", 0))
+            return None  # Return None, not 0, to prevent TOTAL_INCREASING reset
+        energy = data.get("dat", {}).get("energy")
+        if energy is None:
+            return None
+        return float(energy)
 
-    async def get_total_energy(self, plant_id: str) -> float:
-        """Get total energy production."""
+    async def get_total_energy(self, plant_id: str) -> float | None:
+        """Get total energy production.
+        
+        Returns None on error to prevent statistics corruption for TOTAL_INCREASING sensors.
+        """
         data = await self._api_request(
             ACTION_QUERY_PLANT_ENERGY_TOTAL,
             {"plantid": plant_id}
         )
         if data.get("desc") == "ERR_NO_RECORD":
-            return 0.0
-        return float(data.get("dat", {}).get("energy", 0))
+            return None  # Return None, not 0, to prevent TOTAL_INCREASING reset
+        energy = data.get("dat", {}).get("energy")
+        if energy is None:
+            return None
+        return float(energy)
 
     async def get_profit_data(self, plant_id: str, daily_energy: float = 0) -> dict[str, float]:
         """Get profit and environmental data for today."""
@@ -549,6 +567,12 @@ class ShineMonitorDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.plant_name = plant_name
         self._enable_devices = entry.options.get(CONF_ENABLE_DEVICES, DEFAULT_ENABLE_DEVICES)
         
+        # Track last known good values for cumulative sensors
+        # This prevents statistics corruption when API errors return None
+        self._last_total_energy: float | None = None
+        self._last_yearly_energy: float | None = None
+        self._last_monthly_energy: float | None = None
+        
         # Get update interval from options or use default
         update_interval_minutes = entry.options.get("update_interval", 5)
         update_interval = timedelta(minutes=update_interval_minutes)
@@ -569,9 +593,58 @@ class ShineMonitorDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             monthly_energy = await self.client.get_monthly_energy(self.plant_id)
             yearly_energy = await self.client.get_yearly_energy(self.plant_id)
             total_energy = await self.client.get_total_energy(self.plant_id)
-            # Pass energy values for environmental calculations
-            profit_data = await self.client.get_profit_data(self.plant_id, daily_energy)
-            total_profit_data = await self.client.get_total_profit_data(self.plant_id, total_energy)
+            
+            # For cumulative sensors (TOTAL_INCREASING), preserve last known good values
+            # to prevent statistics corruption from API errors or temporary glitches
+            if total_energy is not None:
+                # Validate: total_energy should never decrease significantly (allow small fluctuations)
+                if self._last_total_energy is not None and total_energy < self._last_total_energy * 0.9:
+                    _LOGGER.warning(
+                        "Total energy dropped from %.1f to %.1f kWh - keeping last known value to prevent statistics corruption",
+                        self._last_total_energy, total_energy
+                    )
+                    total_energy = self._last_total_energy
+                else:
+                    self._last_total_energy = total_energy
+            else:
+                # API error - use last known value
+                total_energy = self._last_total_energy
+                if total_energy is None:
+                    _LOGGER.warning("No total energy data available and no cached value")
+            
+            if yearly_energy is not None:
+                if self._last_yearly_energy is not None and yearly_energy < self._last_yearly_energy * 0.9:
+                    _LOGGER.warning(
+                        "Yearly energy dropped from %.1f to %.1f kWh - keeping last known value",
+                        self._last_yearly_energy, yearly_energy
+                    )
+                    yearly_energy = self._last_yearly_energy
+                else:
+                    self._last_yearly_energy = yearly_energy
+            else:
+                yearly_energy = self._last_yearly_energy
+            
+            if monthly_energy is not None:
+                # Monthly resets at start of month, so only validate if we have a previous value
+                # and it's not the first few days of the month
+                if self._last_monthly_energy is not None and monthly_energy < self._last_monthly_energy * 0.5:
+                    now = dt_util.now()
+                    if now.day > 3:  # Only warn if not start of month
+                        _LOGGER.warning(
+                            "Monthly energy dropped from %.1f to %.1f kWh - keeping last known value",
+                            self._last_monthly_energy, monthly_energy
+                        )
+                        monthly_energy = self._last_monthly_energy
+                    else:
+                        self._last_monthly_energy = monthly_energy
+                else:
+                    self._last_monthly_energy = monthly_energy
+            else:
+                monthly_energy = self._last_monthly_energy
+            
+            # Pass energy values for environmental calculations (use 0 if None for calculations)
+            profit_data = await self.client.get_profit_data(self.plant_id, daily_energy or 0)
+            total_profit_data = await self.client.get_total_profit_data(self.plant_id, total_energy or 0)
             warning_count = await self.client.get_warning_count(self.plant_id)
             unhandled_warning_count = await self.client.get_unhandled_warning_count(self.plant_id)
             alarm_summary = await self.client.get_alarm_summary(self.plant_id)
