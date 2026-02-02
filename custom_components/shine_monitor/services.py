@@ -303,7 +303,7 @@ async def _import_history_for_plant(
         cumulative_sum += day_energy
         
         # Create timestamp at local midnight, then convert to UTC
-        # HA requires timestamps at top of hour, so we round down to nearest hour
+        # HA requires timestamps at top of hour
         local_midnight = datetime.datetime(
             day_date.year, day_date.month, day_date.day,
             0, 0, 0
@@ -311,11 +311,13 @@ async def _import_history_for_plant(
         if local_tz:
             local_midnight = local_midnight.replace(tzinfo=local_tz)
             stat_time = local_midnight.astimezone(datetime.timezone.utc)
+            # Round to nearest hour (handle half-hour TZ offsets like IST +5:30)
+            if stat_time.minute >= 30:
+                stat_time = stat_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+            else:
+                stat_time = stat_time.replace(minute=0, second=0, microsecond=0)
         else:
             stat_time = local_midnight.replace(tzinfo=datetime.timezone.utc)
-        
-        # Round down to the nearest hour (HA requires minutes and seconds = 0)
-        stat_time = stat_time.replace(minute=0, second=0, microsecond=0)
         
         statistics.append(
             StatisticData(
@@ -325,7 +327,7 @@ async def _import_history_for_plant(
             )
         )
 
-    # Import the statistics into the sensor
+    # Import the statistics into the total_energy sensor
     if statistics:
         _LOGGER.info(
             "Importing %d statistics for plant %s into %s (total: %.1f kWh)", 
@@ -334,11 +336,78 @@ async def _import_history_for_plant(
         _LOGGER.info("First statistic: %s, Last statistic: %s", statistics[0], statistics[-1])
         try:
             async_import_statistics(hass, metadata, statistics)
-            _LOGGER.info("History import completed successfully for plant %s", plant_name)
+            _LOGGER.info("History import completed successfully for plant %s (total_energy)", plant_name)
         except Exception as err:
             _LOGGER.error("Error calling async_import_statistics: %s", err, exc_info=True)
     else:
         _LOGGER.warning("No historical data found for plant %s", plant_name)
+
+    # Also import into daily_energy sensor
+    daily_unique_id = f"{plant_id}_daily_energy"
+    daily_entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, daily_unique_id)
+    
+    _LOGGER.info("Looking for daily_energy entity with unique_id: %s, found: %s", daily_unique_id, daily_entity_id)
+    
+    if daily_entity_id and all_daily_stats:
+        # Build metadata for daily_energy sensor
+        daily_metadata_kwargs = {
+            "has_mean": False,
+            "has_sum": True,
+            "name": f"{plant_name} Daily Energy",
+            "source": "recorder",
+            "statistic_id": daily_entity_id,
+            "unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR,
+            "unit_class": "energy",
+        }
+        if StatisticMeanType is not None:
+            daily_metadata_kwargs["mean_type"] = StatisticMeanType.NONE
+        else:
+            daily_metadata_kwargs["mean_type"] = None
+        
+        daily_metadata = StatisticMetaData(**daily_metadata_kwargs)
+        
+        # Build daily statistics - state is daily value, sum is cumulative
+        daily_statistics: list[StatisticData] = []
+        daily_cumulative = 0.0
+        
+        for day_date, day_energy in all_daily_stats:
+            daily_cumulative += day_energy
+            
+            # Create timestamp at local midnight, then convert to UTC
+            local_midnight = datetime.datetime(
+                day_date.year, day_date.month, day_date.day,
+                0, 0, 0
+            )
+            if local_tz:
+                local_midnight = local_midnight.replace(tzinfo=local_tz)
+                stat_time = local_midnight.astimezone(datetime.timezone.utc)
+                # Round to nearest hour (handle half-hour TZ offsets like IST +5:30)
+                if stat_time.minute >= 30:
+                    stat_time = stat_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+                else:
+                    stat_time = stat_time.replace(minute=0, second=0, microsecond=0)
+            else:
+                stat_time = local_midnight.replace(tzinfo=datetime.timezone.utc)
+            
+            daily_statistics.append(
+                StatisticData(
+                    start=stat_time,
+                    sum=daily_cumulative,
+                    state=day_energy,  # Daily value for daily_energy sensor
+                )
+            )
+        
+        _LOGGER.info(
+            "Importing %d statistics for plant %s into %s (daily_energy)", 
+            len(daily_statistics), plant_name, daily_entity_id
+        )
+        try:
+            async_import_statistics(hass, daily_metadata, daily_statistics)
+            _LOGGER.info("History import completed successfully for plant %s (daily_energy)", plant_name)
+        except Exception as err:
+            _LOGGER.error("Error importing daily_energy statistics: %s", err, exc_info=True)
+    elif not daily_entity_id:
+        _LOGGER.warning("Could not find daily_energy sensor for plant %s (unique_id: %s)", plant_name, daily_unique_id)
 
 
 async def import_monthly_statistics(
