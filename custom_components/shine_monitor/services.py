@@ -303,7 +303,7 @@ async def _import_history_for_plant(
         cumulative_sum += day_energy
         
         # Create timestamp at local midnight, then convert to UTC
-        # This ensures statistics align with the user's day boundaries
+        # HA requires timestamps at top of hour, so we round down to nearest hour
         local_midnight = datetime.datetime(
             day_date.year, day_date.month, day_date.day,
             0, 0, 0
@@ -313,6 +313,9 @@ async def _import_history_for_plant(
             stat_time = local_midnight.astimezone(datetime.timezone.utc)
         else:
             stat_time = local_midnight.replace(tzinfo=datetime.timezone.utc)
+        
+        # Round down to the nearest hour (HA requires minutes and seconds = 0)
+        stat_time = stat_time.replace(minute=0, second=0, microsecond=0)
         
         statistics.append(
             StatisticData(
