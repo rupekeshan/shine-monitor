@@ -113,6 +113,8 @@ DATA_WARNING_COUNT = "warning_count"
 DATA_INSTALLED_CAPACITY = "installed_capacity"
 DATA_INVERTER_FAULT_COUNT = "inverter_fault_count"
 DATA_GRID_FAULT_COUNT = "grid_fault_count"
+DATA_INVERTER_ALARMS = "inverter_alarms"
+DATA_GRID_ALARMS = "grid_alarms"
 DATA_LATEST_ALARM = "latest_alarm"
 DATA_LATEST_INVERTER_FAULT = "latest_inverter_fault"
 
