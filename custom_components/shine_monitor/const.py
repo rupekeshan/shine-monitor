@@ -114,6 +114,7 @@ DATA_INSTALLED_CAPACITY = "installed_capacity"
 
 # Service names
 SERVICE_IMPORT_HISTORY = "import_history"
+SERVICE_IMPORT_POWER_HISTORY = "import_power_history"
 SERVICE_REFRESH_DATA = "refresh_data"
 
 # Attributes

@@ -32,6 +32,7 @@ from .const import (
     ATTR_PLANT_ID,
     ATTR_START_DATE,
     SERVICE_IMPORT_HISTORY,
+    SERVICE_IMPORT_POWER_HISTORY,
 )
 from .coordinator import ShineMonitorDataUpdateCoordinator
 
@@ -40,6 +41,12 @@ _LOGGER = logging.getLogger(__name__)
 SERVICE_IMPORT_HISTORY_SCHEMA = vol.Schema(
     {
         vol.Optional(ATTR_START_DATE): cv.date,
+    }
+)
+
+SERVICE_IMPORT_POWER_HISTORY_SCHEMA = vol.Schema(
+    {
+        vol.Optional("days", default=90): vol.All(vol.Coerce(int), vol.Range(min=1, max=365)),
     }
 )
 
@@ -61,6 +68,20 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         for entry_id, coordinator in coordinators.items():
             await _import_history_for_plant(hass, coordinator, start_date)
 
+    async def handle_import_power_history(call: ServiceCall) -> None:
+        """Handle the import power history service call."""
+        days = call.data.get("days", 90)
+        
+        # Get all coordinators
+        coordinators: dict[str, ShineMonitorDataUpdateCoordinator] = hass.data.get(DOMAIN, {})
+        
+        if not coordinators:
+            _LOGGER.error("No Shine Monitor integrations found")
+            return
+
+        for entry_id, coordinator in coordinators.items():
+            await _import_power_history_for_plant(hass, coordinator, days)
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_IMPORT_HISTORY,
@@ -68,11 +89,19 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         schema=SERVICE_IMPORT_HISTORY_SCHEMA,
     )
 
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_IMPORT_POWER_HISTORY,
+        handle_import_power_history,
+        schema=SERVICE_IMPORT_POWER_HISTORY_SCHEMA,
+    )
+
 
 async def async_unload_services(hass: HomeAssistant) -> None:
     """Unload Shine Monitor services."""
     if not hass.data.get(DOMAIN):
         hass.services.async_remove(DOMAIN, SERVICE_IMPORT_HISTORY)
+        hass.services.async_remove(DOMAIN, SERVICE_IMPORT_POWER_HISTORY)
 
 
 async def _import_history_for_plant(
@@ -97,15 +126,15 @@ async def _import_history_for_plant(
 
     _LOGGER.info("Starting history import for plant %s (%s)", plant_name, plant_id)
 
-    # Find the total_energy sensor's entity_id from the entity registry
+    # Find the daily_energy sensor's entity_id from the entity registry
     ent_reg = er.async_get(hass)
-    unique_id = f"{plant_id}_total_energy"
+    unique_id = f"{plant_id}_daily_energy"
     entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, unique_id)
     
     _LOGGER.info("Looking for entity with unique_id: %s, found: %s", unique_id, entity_id)
     
     if not entity_id:
-        _LOGGER.error("Could not find total_energy sensor for plant %s (unique_id: %s)", plant_name, unique_id)
+        _LOGGER.error("Could not find daily_energy sensor for plant %s (unique_id: %s)", plant_name, unique_id)
         # Try to list all shine_monitor entities for debugging
         all_entities = ent_reg.entities.get_entries_for_domain(DOMAIN)
         _LOGGER.error("Available shine_monitor entities: %s", [(e.entity_id, e.unique_id) for e in all_entities])
@@ -131,7 +160,7 @@ async def _import_history_for_plant(
     metadata_kwargs = {
         "has_mean": False,
         "has_sum": True,
-        "name": f"{plant_name} Total Energy",
+        "name": f"{plant_name} Daily Energy",
         "source": "recorder",
         "statistic_id": statistic_id,
         "unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR,
@@ -381,3 +410,143 @@ async def import_monthly_statistics(
         async_add_external_statistics(hass, metadata, statistics)
     else:
         _LOGGER.warning("No monthly historical data found for plant %s", plant_name)
+
+
+async def _import_power_history_for_plant(
+    hass: HomeAssistant,
+    coordinator: ShineMonitorDataUpdateCoordinator,
+    days: int = 90,
+) -> None:
+    """Import power history for the last N days.
+    
+    Fetches 5-minute power readings from the API for each day,
+    downsamples to hourly for storage efficiency.
+    """
+    from homeassistant.const import UnitOfPower
+    
+    plant_id = coordinator.plant_id
+    plant_name = coordinator.plant_name
+    client = coordinator.client
+
+    _LOGGER.info("Starting power history import for plant %s (last %d days)", plant_name, days)
+
+    # Find the current_power sensor's entity_id from the entity registry
+    ent_reg = er.async_get(hass)
+    unique_id = f"{plant_id}_current_power"
+    entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, unique_id)
+    
+    _LOGGER.info("Looking for power entity with unique_id: %s, found: %s", unique_id, entity_id)
+    
+    if not entity_id:
+        _LOGGER.error("Could not find current_power sensor for plant %s (unique_id: %s)", plant_name, unique_id)
+        return
+    
+    _LOGGER.info("Importing power history into sensor: %s", entity_id)
+
+    now = dt_util.now()
+    start_date = (now - timedelta(days=days)).date()
+    
+    # Use sensor entity_id as statistic_id with recorder source
+    statistic_id = entity_id
+    
+    # Build metadata for power statistics (mean values, no sum)
+    metadata_kwargs = {
+        "has_mean": True,
+        "has_sum": False,
+        "name": f"{plant_name} Current Power",
+        "source": "recorder",
+        "statistic_id": statistic_id,
+        "unit_of_measurement": UnitOfPower.WATT,
+        "unit_class": "power",
+    }
+    if StatisticMeanType is not None:
+        metadata_kwargs["mean_type"] = StatisticMeanType.ARITHMETIC
+    else:
+        metadata_kwargs["mean_type"] = None
+    
+    metadata = StatisticMetaData(**metadata_kwargs)
+
+    # Collect all hourly power stats
+    statistics: list[StatisticData] = []
+    
+    current_date = start_date
+    days_processed = 0
+    
+    while current_date <= now.date():
+        _LOGGER.debug("Fetching power data for %s", current_date)
+        
+        try:
+            # Get power readings for this day
+            power_data = await client.get_power_one_day(plant_id, current_date)
+            
+            if power_data:
+                _LOGGER.debug("Got %d power readings for %s", len(power_data), current_date)
+                
+                # Group readings by hour and calculate mean
+                hourly_readings: dict[int, list[float]] = {h: [] for h in range(24)}
+                
+                for reading in power_data:
+                    try:
+                        ts = reading.get("ts") or reading.get("time") or ""
+                        power = float(reading.get("val") or reading.get("power") or reading.get("outputPower") or 0)
+                        
+                        if ts and power >= 0:
+                            # Parse timestamp to get hour
+                            if " " in ts:
+                                time_part = ts.split(" ")[1]
+                                hour = int(time_part.split(":")[0])
+                            else:
+                                # Might be just time
+                                hour = int(ts.split(":")[0])
+                            
+                            hourly_readings[hour].append(power)
+                    except (ValueError, IndexError, TypeError):
+                        continue
+                
+                # Create hourly statistics
+                for hour in range(24):
+                    readings = hourly_readings[hour]
+                    if readings:
+                        mean_power = sum(readings) / len(readings)
+                        max_power = max(readings)
+                        min_power = min(readings)
+                        
+                        stat_time = datetime.datetime(
+                            current_date.year, current_date.month, current_date.day,
+                            hour, 0, 0, tzinfo=datetime.timezone.utc
+                        )
+                        
+                        statistics.append(
+                            StatisticData(
+                                start=stat_time,
+                                mean=mean_power,
+                                max=max_power,
+                                min=min_power,
+                            )
+                        )
+            
+            days_processed += 1
+            if days_processed % 10 == 0:
+                _LOGGER.info("Processed %d/%d days for power history", days_processed, days)
+                
+        except Exception as err:
+            _LOGGER.warning("Error fetching power data for %s: %s", current_date, err)
+
+        current_date += timedelta(days=1)
+
+    # Sort statistics by timestamp
+    statistics.sort(key=lambda x: x["start"])
+
+    # Import the statistics into the sensor
+    if statistics:
+        _LOGGER.info(
+            "Importing %d hourly power statistics for plant %s into %s", 
+            len(statistics), plant_name, statistic_id
+        )
+        try:
+            async_import_statistics(hass, metadata, statistics)
+            _LOGGER.info("Power history import completed successfully for plant %s", plant_name)
+        except Exception as err:
+            _LOGGER.error("Error importing power statistics: %s", err, exc_info=True)
+    else:
+        _LOGGER.warning("No power history data found for plant %s", plant_name)

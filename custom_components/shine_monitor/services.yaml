@@ -14,3 +14,25 @@ import_history:
       example: "2023-01-01"
       selector:
         date:
+
+import_power_history:
+  name: Import Power History
+  description: >-
+    Import historical power output data from Shine Monitor cloud into 
+    Home Assistant's long-term statistics. This fetches 5-minute power readings
+    and stores them as hourly averages. Useful for viewing historical power curves.
+  fields:
+    days:
+      name: Days
+      description: >-
+        Number of days to import (1-365). Default is 90 days.
+        Each day requires one API call.
+      required: false
+      default: 90
+      example: 90
+      selector:
+        number:
+          min: 1
+          max: 365
+          step: 1
+          mode: slider

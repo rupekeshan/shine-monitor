@@ -451,6 +451,28 @@ class ShineMonitorAPIClient:
         _LOGGER.debug("Month %d not found in data", month)
         return 0.0
 
+    async def get_power_one_day(
+        self, plant_id: str, date: datetime.date
+    ) -> list[dict[str, Any]]:
+        """Get power readings for a specific day (for history import).
+        
+        Returns list of power readings with timestamps throughout the day.
+        """
+        from .const import ACTION_QUERY_PLANT_ACTIVE_OUTPUT_POWER_ONE_DAY
+        
+        date_str = date.strftime("%Y-%m-%d")
+        data = await self._api_request(
+            ACTION_QUERY_PLANT_ACTIVE_OUTPUT_POWER_ONE_DAY,
+            {"plantid": plant_id, "date": date_str}
+        )
+        
+        if data.get("desc") == "ERR_NO_RECORD":
+            return []
+        
+        # API returns dat.power array with ts and val fields
+        dat = data.get("dat", {})
+        return dat.get("power", []) or dat.get("outputPower", []) or []
+
 
 class ShineMonitorDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Class to manage fetching Shine Monitor data."""
