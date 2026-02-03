@@ -141,14 +141,47 @@ class ShineMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
         import datetime
         
         if user_input is not None:
-            # Create entry with import preferences
+            if user_input.get(CONF_IMPORT_HISTORY, False):
+                # User wants to import - proceed to year selection
+                return await self.async_step_import_year()
+            else:
+                # No import - create entry directly
+                return self.async_create_entry(
+                    title=f"Shine Monitor - {self.selected_plant['name']}",
+                    data={
+                        **self.auth_info,
+                        CONF_PLANT_ID: str(self.selected_plant["pid"]),
+                        CONF_PLANT_NAME: self.selected_plant["name"],
+                        CONF_IMPORT_HISTORY: False,
+                    },
+                )
+
+        return self.async_show_form(
+            step_id="import_options",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_IMPORT_HISTORY, default=True): bool,
+                }
+            ),
+            description_placeholders={
+                "plant_name": self.selected_plant["name"],
+            },
+        )
+
+    async def async_step_import_year(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle import year selection."""
+        import datetime
+        
+        if user_input is not None:
             return self.async_create_entry(
                 title=f"Shine Monitor - {self.selected_plant['name']}",
                 data={
                     **self.auth_info,
                     CONF_PLANT_ID: str(self.selected_plant["pid"]),
                     CONF_PLANT_NAME: self.selected_plant["name"],
-                    CONF_IMPORT_HISTORY: user_input.get(CONF_IMPORT_HISTORY, False),
+                    CONF_IMPORT_HISTORY: True,
                     CONF_IMPORT_START_YEAR: user_input.get(CONF_IMPORT_START_YEAR, 2020),
                 },
             )
@@ -157,11 +190,10 @@ class ShineMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
         year_options = {str(y): str(y) for y in range(2015, current_year + 1)}
 
         return self.async_show_form(
-            step_id="import_options",
+            step_id="import_year",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_IMPORT_HISTORY, default=True): bool,
-                    vol.Optional(CONF_IMPORT_START_YEAR, default=2020): vol.In(year_options),
+                    vol.Required(CONF_IMPORT_START_YEAR, default="2020"): vol.In(year_options),
                 }
             ),
             description_placeholders={

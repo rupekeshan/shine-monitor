@@ -21,7 +21,13 @@
         "title": "Import Historical Data",
         "description": "Would you like to import historical energy data? This will populate statistics so the Energy Dashboard shows accurate data from day one. If you skip this, only future data will be tracked.",
         "data": {
-          "import_history": "Import historical data during setup",
+          "import_history": "Import historical data during setup"
+        }
+      },
+      "import_year": {
+        "title": "Select Start Year",
+        "description": "Select the year to start importing historical data from.",
+        "data": {
           "import_start_year": "Start year for import"
         }
       }

@@ -318,21 +318,20 @@ async def _import_history_for_plant(
     for day_date, day_energy in all_daily_stats:
         cumulative_sum += day_energy
         
-        # Create timestamp at local 6 PM (18:00), then convert to UTC
-        # Using 6 PM because:
-        # 1. Solar generation is complete for the day by evening
-        # 2. 18:00 IST = 12:30 UTC -> truncated to 12:00 UTC (same day) ✓
-        # 3. Avoids overlap with live sensor which handles current day
-        local_evening = datetime.datetime(
+        # Create timestamp at END of day (23:00 local time) for this day's energy
+        # Energy Dashboard calculates daily as: sum_at_end_of_day - sum_at_start_of_day
+        # So we need statistics at hour boundaries that span midnight
+        # 23:00 IST = 17:30 UTC -> truncated to 17:00 UTC (same day)
+        local_end_of_day = datetime.datetime(
             day_date.year, day_date.month, day_date.day,
-            18, 0, 0  # 6 PM local time
+            23, 0, 0  # 11 PM local time (end of day)
         )
         if local_tz:
-            local_evening = local_evening.replace(tzinfo=local_tz)
-            stat_time = local_evening.astimezone(datetime.timezone.utc)
+            local_end_of_day = local_end_of_day.replace(tzinfo=local_tz)
+            stat_time = local_end_of_day.astimezone(datetime.timezone.utc)
             stat_time = stat_time.replace(minute=0, second=0, microsecond=0)
         else:
-            stat_time = local_evening.replace(tzinfo=datetime.timezone.utc)
+            stat_time = local_end_of_day.replace(tzinfo=datetime.timezone.utc)
         
         statistics.append(
             StatisticData(
@@ -341,6 +340,31 @@ async def _import_history_for_plant(
                 state=cumulative_sum,  # For total_energy, state is the cumulative value
             )
         )
+
+    # Add a "bridge" statistic for TODAY at midnight (start of day)
+    # This gives the Energy Dashboard a starting point for today's calculations
+    # The recorder will continue from here with hourly stats from live sensor
+    if cumulative_sum > 0:
+        local_today_midnight = datetime.datetime(
+            now.year, now.month, now.day,
+            0, 0, 0  # Midnight local time (start of today)
+        )
+        if local_tz:
+            local_today_midnight = local_today_midnight.replace(tzinfo=local_tz)
+            today_stat_time = local_today_midnight.astimezone(datetime.timezone.utc)
+            today_stat_time = today_stat_time.replace(minute=0, second=0, microsecond=0)
+        else:
+            today_stat_time = local_today_midnight.replace(tzinfo=datetime.timezone.utc)
+        
+        # The sum at start of today equals cumulative sum from all previous days
+        statistics.append(
+            StatisticData(
+                start=today_stat_time,
+                sum=cumulative_sum,
+                state=cumulative_sum,
+            )
+        )
+        _LOGGER.info("Added bridge statistic for today: %s with sum=%.1f kWh", today_stat_time, cumulative_sum)
 
     # Import the statistics into the total_energy sensor
     if statistics:
@@ -388,25 +412,45 @@ async def _import_history_for_plant(
         for day_date, day_energy in all_daily_stats:
             daily_cumulative += day_energy
             
-            # Create timestamp at local 6 PM (18:00), then convert to UTC
-            # Using 6 PM ensures solar generation is complete for the day
-            # and avoids overlap with live sensor handling current day
-            local_evening = datetime.datetime(
+            # Create timestamp at END of day (23:00 local time)
+            # Must match total_energy timing for Energy Dashboard to work
+            local_end_of_day = datetime.datetime(
                 day_date.year, day_date.month, day_date.day,
-                18, 0, 0  # 6 PM local time
+                23, 0, 0  # 11 PM local time (end of day)
             )
             if local_tz:
-                local_evening = local_evening.replace(tzinfo=local_tz)
-                stat_time = local_evening.astimezone(datetime.timezone.utc)
+                local_end_of_day = local_end_of_day.replace(tzinfo=local_tz)
+                stat_time = local_end_of_day.astimezone(datetime.timezone.utc)
                 stat_time = stat_time.replace(minute=0, second=0, microsecond=0)
             else:
-                stat_time = local_evening.replace(tzinfo=datetime.timezone.utc)
+                stat_time = local_end_of_day.replace(tzinfo=datetime.timezone.utc)
             
             daily_statistics.append(
                 StatisticData(
                     start=stat_time,
                     sum=daily_cumulative,
                     state=day_energy,  # Daily value for daily_energy sensor
+                )
+            )
+        
+        # Add bridge statistic for TODAY at midnight (start of day)
+        if daily_cumulative > 0:
+            local_today_midnight = datetime.datetime(
+                now.year, now.month, now.day,
+                0, 0, 0  # Midnight local time
+            )
+            if local_tz:
+                local_today_midnight = local_today_midnight.replace(tzinfo=local_tz)
+                today_stat_time = local_today_midnight.astimezone(datetime.timezone.utc)
+                today_stat_time = today_stat_time.replace(minute=0, second=0, microsecond=0)
+            else:
+                today_stat_time = local_today_midnight.replace(tzinfo=datetime.timezone.utc)
+            
+            daily_statistics.append(
+                StatisticData(
+                    start=today_stat_time,
+                    sum=daily_cumulative,
+                    state=0,  # No energy yet at start of today
                 )
             )
         
