@@ -126,21 +126,12 @@ async def _import_history_for_plant(
 
     _LOGGER.info("Starting history import for plant %s (%s)", plant_name, plant_id)
 
-    # Find the total_energy sensor's entity_id from the entity registry
-    ent_reg = er.async_get(hass)
-    unique_id = f"{plant_id}_total_energy"
-    entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, unique_id)
+    # Use EXTERNAL statistics with separate names - this doesn't interfere with live sensors
+    # Live sensors (sensor.solar_plant_*) work with Energy Dashboard
+    # Historical statistics (shine_monitor:*_historical) are for viewing trends
+    statistic_id = f"{DOMAIN}:plant_{plant_id}_total_energy_historical"
     
-    _LOGGER.info("Looking for entity with unique_id: %s, found: %s", unique_id, entity_id)
-    
-    if not entity_id:
-        _LOGGER.error("Could not find total_energy sensor for plant %s (unique_id: %s)", plant_name, unique_id)
-        # Try to list all shine_monitor entities for debugging
-        all_entities = ent_reg.entities.get_entries_for_domain(DOMAIN)
-        _LOGGER.error("Available shine_monitor entities: %s", [(e.entity_id, e.unique_id) for e in all_entities])
-        return
-    
-    _LOGGER.info("Importing history into sensor: %s", entity_id)
+    _LOGGER.info("Importing history into EXTERNAL statistic: %s (separate from live sensor)", statistic_id)
 
     # Determine the date range
     now = dt_util.now()
@@ -153,15 +144,12 @@ async def _import_history_for_plant(
         start_dt = datetime.datetime.combine(start_date, datetime.time.min)
         start_dt = dt_util.as_local(start_dt)
     
-    # Use sensor entity_id as statistic_id with recorder source
-    statistic_id = entity_id
-    
-    # Build metadata for sensor statistics
+    # Build metadata for EXTERNAL statistics (source = DOMAIN, not "recorder")
     metadata_kwargs = {
         "has_mean": False,
         "has_sum": True,
-        "name": f"{plant_name} Total Energy",
-        "source": "recorder",
+        "name": f"{plant_name} Total Energy (Historical)",
+        "source": DOMAIN,  # External source - won't interfere with live sensor
         "statistic_id": statistic_id,
         "unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR,
         "unit_class": "energy",
@@ -341,32 +329,7 @@ async def _import_history_for_plant(
             )
         )
 
-    # Add a "bridge" statistic for TODAY at midnight (start of day)
-    # This gives the Energy Dashboard a starting point for today's calculations
-    # The recorder will continue from here with hourly stats from live sensor
-    if cumulative_sum > 0:
-        local_today_midnight = datetime.datetime(
-            now.year, now.month, now.day,
-            0, 0, 0  # Midnight local time (start of today)
-        )
-        if local_tz:
-            local_today_midnight = local_today_midnight.replace(tzinfo=local_tz)
-            today_stat_time = local_today_midnight.astimezone(datetime.timezone.utc)
-            today_stat_time = today_stat_time.replace(minute=0, second=0, microsecond=0)
-        else:
-            today_stat_time = local_today_midnight.replace(tzinfo=datetime.timezone.utc)
-        
-        # The sum at start of today equals cumulative sum from all previous days
-        statistics.append(
-            StatisticData(
-                start=today_stat_time,
-                sum=cumulative_sum,
-                state=cumulative_sum,
-            )
-        )
-        _LOGGER.info("Added bridge statistic for today: %s with sum=%.1f kWh", today_stat_time, cumulative_sum)
-
-    # Import the statistics into the total_energy sensor
+    # Import the statistics as EXTERNAL statistics (won't interfere with live sensor)
     if statistics:
         _LOGGER.info(
             "Importing %d statistics for plant %s into %s (total: %.1f kWh)", 
@@ -374,27 +337,24 @@ async def _import_history_for_plant(
         )
         _LOGGER.info("First statistic: %s, Last statistic: %s", statistics[0], statistics[-1])
         try:
-            async_import_statistics(hass, metadata, statistics)
-            _LOGGER.info("History import completed successfully for plant %s (total_energy)", plant_name)
+            async_add_external_statistics(hass, metadata, statistics)
+            _LOGGER.info("History import completed successfully for plant %s (total_energy_historical)", plant_name)
         except Exception as err:
-            _LOGGER.error("Error calling async_import_statistics: %s", err, exc_info=True)
+            _LOGGER.error("Error calling async_add_external_statistics: %s", err, exc_info=True)
     else:
         _LOGGER.warning("No historical data found for plant %s", plant_name)
 
-    # Also import into daily_energy sensor
-    daily_unique_id = f"{plant_id}_daily_energy"
-    daily_entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, daily_unique_id)
+    # Also import into daily_energy_historical (external statistic)
+    daily_statistic_id = f"{DOMAIN}:plant_{plant_id}_daily_energy_historical"
     
-    _LOGGER.info("Looking for daily_energy entity with unique_id: %s, found: %s", daily_unique_id, daily_entity_id)
-    
-    if daily_entity_id and all_daily_stats:
-        # Build metadata for daily_energy sensor
+    if all_daily_stats:
+        # Build metadata for daily_energy EXTERNAL statistic
         daily_metadata_kwargs = {
             "has_mean": False,
             "has_sum": True,
-            "name": f"{plant_name} Daily Energy",
-            "source": "recorder",
-            "statistic_id": daily_entity_id,
+            "name": f"{plant_name} Daily Energy (Historical)",
+            "source": DOMAIN,  # External source
+            "statistic_id": daily_statistic_id,
             "unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR,
             "unit_class": "energy",
         }
@@ -413,7 +373,6 @@ async def _import_history_for_plant(
             daily_cumulative += day_energy
             
             # Create timestamp at END of day (23:00 local time)
-            # Must match total_energy timing for Energy Dashboard to work
             local_end_of_day = datetime.datetime(
                 day_date.year, day_date.month, day_date.day,
                 23, 0, 0  # 11 PM local time (end of day)
@@ -433,38 +392,15 @@ async def _import_history_for_plant(
                 )
             )
         
-        # Add bridge statistic for TODAY at midnight (start of day)
-        if daily_cumulative > 0:
-            local_today_midnight = datetime.datetime(
-                now.year, now.month, now.day,
-                0, 0, 0  # Midnight local time
-            )
-            if local_tz:
-                local_today_midnight = local_today_midnight.replace(tzinfo=local_tz)
-                today_stat_time = local_today_midnight.astimezone(datetime.timezone.utc)
-                today_stat_time = today_stat_time.replace(minute=0, second=0, microsecond=0)
-            else:
-                today_stat_time = local_today_midnight.replace(tzinfo=datetime.timezone.utc)
-            
-            daily_statistics.append(
-                StatisticData(
-                    start=today_stat_time,
-                    sum=daily_cumulative,
-                    state=0,  # No energy yet at start of today
-                )
-            )
-        
         _LOGGER.info(
-            "Importing %d statistics for plant %s into %s (daily_energy)", 
-            len(daily_statistics), plant_name, daily_entity_id
+            "Importing %d statistics for plant %s into %s (daily_energy_historical)", 
+            len(daily_statistics), plant_name, daily_statistic_id
         )
         try:
-            async_import_statistics(hass, daily_metadata, daily_statistics)
-            _LOGGER.info("History import completed successfully for plant %s (daily_energy)", plant_name)
+            async_add_external_statistics(hass, daily_metadata, daily_statistics)
+            _LOGGER.info("History import completed successfully for plant %s (daily_energy_historical)", plant_name)
         except Exception as err:
-            _LOGGER.error("Error importing daily_energy statistics: %s", err, exc_info=True)
-    elif not daily_entity_id:
-        _LOGGER.warning("Could not find daily_energy sensor for plant %s (unique_id: %s)", plant_name, daily_unique_id)
+            _LOGGER.error("Error importing daily_energy_historical statistics: %s", err, exc_info=True)
 
 
 async def import_monthly_statistics(
