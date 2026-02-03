@@ -302,19 +302,21 @@ async def _import_history_for_plant(
     for day_date, day_energy in all_daily_stats:
         cumulative_sum += day_energy
         
-        # Create timestamp at local midnight, then convert to UTC
-        # HA requires timestamps at top of hour, round down to preserve the correct day
-        # Note: For half-hour TZ offsets like IST (+5:30), display will show :30
-        local_midnight = datetime.datetime(
+        # Create timestamp at local NOON, then convert to UTC
+        # Using noon (12:00) instead of midnight ensures the timestamp stays within
+        # the correct local day even after truncation for half-hour TZ offsets like IST (+5:30)
+        # Midnight IST would become 18:30 UTC -> truncated to 18:00 UTC (previous day!)
+        # Noon IST becomes 06:30 UTC -> truncated to 06:00 UTC (same day) ✓
+        local_noon = datetime.datetime(
             day_date.year, day_date.month, day_date.day,
-            0, 0, 0
+            12, 0, 0
         )
         if local_tz:
-            local_midnight = local_midnight.replace(tzinfo=local_tz)
-            stat_time = local_midnight.astimezone(datetime.timezone.utc)
+            local_noon = local_noon.replace(tzinfo=local_tz)
+            stat_time = local_noon.astimezone(datetime.timezone.utc)
             stat_time = stat_time.replace(minute=0, second=0, microsecond=0)
         else:
-            stat_time = local_midnight.replace(tzinfo=datetime.timezone.utc)
+            stat_time = local_noon.replace(tzinfo=datetime.timezone.utc)
         
         statistics.append(
             StatisticData(
@@ -370,18 +372,19 @@ async def _import_history_for_plant(
         for day_date, day_energy in all_daily_stats:
             daily_cumulative += day_energy
             
-            # Create timestamp at local midnight, then convert to UTC
-            # Round down to preserve the correct day for half-hour TZ offsets
-            local_midnight = datetime.datetime(
+            # Create timestamp at local NOON, then convert to UTC
+            # Using noon ensures the timestamp stays within the correct local day
+            # even after truncation for half-hour TZ offsets like IST (+5:30)
+            local_noon = datetime.datetime(
                 day_date.year, day_date.month, day_date.day,
-                0, 0, 0
+                12, 0, 0
             )
             if local_tz:
-                local_midnight = local_midnight.replace(tzinfo=local_tz)
-                stat_time = local_midnight.astimezone(datetime.timezone.utc)
+                local_noon = local_noon.replace(tzinfo=local_tz)
+                stat_time = local_noon.astimezone(datetime.timezone.utc)
                 stat_time = stat_time.replace(minute=0, second=0, microsecond=0)
             else:
-                stat_time = local_midnight.replace(tzinfo=datetime.timezone.utc)
+                stat_time = local_noon.replace(tzinfo=datetime.timezone.utc)
             
             daily_statistics.append(
                 StatisticData(
