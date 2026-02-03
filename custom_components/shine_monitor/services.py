@@ -184,8 +184,7 @@ async def _import_history_for_plant(
             _LOGGER.info("Month %d-%02d: got %d daily records", year, month, len(daily_data))
             
             # Parse daily data into a dict: day_of_month -> energy
-            # First pass: get ALL values including today (needed for adjustment)
-            all_daily_values: dict[int, float] = {}
+            daily_values: dict[int, float] = {}
             for day_record in daily_data:
                 try:
                     day_str = day_record.get("ts") or day_record.get("date") or day_record.get("time") or ""
@@ -194,33 +193,18 @@ async def _import_history_for_plant(
                     day_str = day_str.split(" ")[0]
                     day_date = datetime.datetime.strptime(day_str, "%Y-%m-%d")
                     
-                    # Skip future dates only
+                    # Skip future dates
                     if day_date.date() > now.date():
                         continue
                     
                     day_energy = float(day_record.get("val") or day_record.get("energy") or day_record.get("value") or 0)
-                    all_daily_values[day_date.day] = day_energy
+                    daily_values[day_date.day] = day_energy
                 except (ValueError, KeyError):
                     continue
             
-            # For current month: subtract today's energy from monthly_total
-            # because monthly_total includes today, but we only import up to yesterday
-            today_energy = 0.0
+            # Determine how many days in this month (up to today if current month)
             if year == now.year and month == now.month:
-                today_energy = all_daily_values.get(now.day, 0)
-                monthly_total = monthly_total - today_energy
-                _LOGGER.debug("Current month: subtracted today's %.1f kWh from monthly total", today_energy)
-            
-            # Now filter to exclude today - live sensor handles current day
-            daily_values: dict[int, float] = {
-                day: energy for day, energy in all_daily_values.items()
-                if datetime.date(year, month, day) < now.date()
-            }
-            
-            # Determine how many days in this month (up to yesterday if current month)
-            # Today is excluded - live sensor handles current day
-            if year == now.year and month == now.month:
-                days_in_month = now.day - 1  # Exclude today
+                days_in_month = now.day
             else:
                 days_in_month = calendar.monthrange(year, month)[1]
             
@@ -276,10 +260,10 @@ async def _import_history_for_plant(
                         reconciled_daily[day] = daily_values[day] * scale_factor
                     _LOGGER.debug("Scaled daily values by %.3f to match monthly total", scale_factor)
             
-            # Add reconciled daily values to our list (excluding today)
+            # Add reconciled daily values to our list
             for day in range(1, days_in_month + 1):
                 day_date = datetime.date(year, month, day)
-                if day_date >= now.date():
+                if day_date > now.date():
                     break
                 energy = reconciled_daily.get(day, 0)
                 if energy > 0:

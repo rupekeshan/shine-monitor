@@ -32,11 +32,29 @@ actions:
           - condition: trigger
             id: wifi_down
         sequence:
+          # Save current volume
+          - variables:
+              previous_volume: "{{ state_attr('media_player.rupekeshan_s_echo_dot', 'volume_level') | float(0.5) }}"
+          # Set volume to max
+          - action: media_player.volume_set
+            target:
+              entity_id: media_player.rupekeshan_s_echo_dot
+            data:
+              volume_level: 1.0
+          # Announce
           - action: notify.alexa_media_rupekeshan_s_echo_dot
             data:
               message: "Solar alert. The Shine Monitor data is missing. Please check your terrace WiFi."
               data:
                 type: tts
+          # Wait for announcement to finish
+          - delay: "00:00:08"
+          # Restore previous volume
+          - action: media_player.volume_set
+            target:
+              entity_id: media_player.rupekeshan_s_echo_dot
+            data:
+              volume_level: "{{ previous_volume }}"
           - action: notify.family_phones
             data:
               title: "Solar WiFi Down"
@@ -49,11 +67,29 @@ actions:
           - condition: trigger
             id: inverter_alarm
         sequence:
+          # Save current volume
+          - variables:
+              previous_volume: "{{ state_attr('media_player.rupekeshan_s_echo_dot', 'volume_level') | float(0.5) }}"
+          # Set volume to max
+          - action: media_player.volume_set
+            target:
+              entity_id: media_player.rupekeshan_s_echo_dot
+            data:
+              volume_level: 1.0
+          # Announce
           - action: notify.alexa_media_rupekeshan_s_echo_dot
             data:
               message: "Solar alert. The inverter has a fault. Check the display for an error code."
               data:
                 type: tts
+          # Wait for announcement to finish
+          - delay: "00:00:08"
+          # Restore previous volume
+          - action: media_player.volume_set
+            target:
+              entity_id: media_player.rupekeshan_s_echo_dot
+            data:
+              volume_level: "{{ previous_volume }}"
           - action: notify.family_phones
             data:
               title: "⚠️ Inverter Alarm"
@@ -69,11 +105,29 @@ actions:
             entity_id: sensor.solar_plant_rupekeshan_daily_energy
             below: 0.1
         sequence:
+          # Save current volume
+          - variables:
+              previous_volume: "{{ state_attr('media_player.rupekeshan_s_echo_dot', 'volume_level') | float(0.5) }}"
+          # Set volume to max
+          - action: media_player.volume_set
+            target:
+              entity_id: media_player.rupekeshan_s_echo_dot
+            data:
+              volume_level: 1.0
+          # Announce
           - action: notify.alexa_media_rupekeshan_s_echo_dot
             data:
               message: "Solar alert. The inverter produced zero power today. Check for an error on the display."
               data:
                 type: tts
+          # Wait for announcement to finish
+          - delay: "00:00:08"
+          # Restore previous volume
+          - action: media_player.volume_set
+            target:
+              entity_id: media_player.rupekeshan_s_echo_dot
+            data:
+              volume_level: "{{ previous_volume }}"
           - action: notify.family_phones
             data:
               title: "Zero Solar Production"
@@ -88,6 +142,16 @@ triggers:
     offset: "-00:30:00"
 
 actions:
+  # Save current volume
+  - variables:
+      previous_volume: "{{ state_attr('media_player.rupekeshan_s_echo_dot', 'volume_level') | float(0.5) }}"
+  # Set volume to max
+  - action: media_player.volume_set
+    target:
+      entity_id: media_player.rupekeshan_s_echo_dot
+    data:
+      volume_level: 1.0
+  # Announce
   - action: notify.alexa_media_rupekeshan_s_echo_dot
     data:
       message: >
@@ -97,6 +161,15 @@ actions:
         {{ states('sensor.solar_plant_rupekeshan_monthly_energy') | round(1) }} kilowatt hours.
       data:
         type: tts
+  # Wait for announcement to finish
+  - delay: "00:00:10"
+  # Restore previous volume
+  - action: media_player.volume_set
+    target:
+      entity_id: media_player.rupekeshan_s_echo_dot
+    data:
+      volume_level: "{{ previous_volume }}"
+  # Send phone notification
   - action: notify.family_phones
     data:
       title: "Daily Solar Report"
