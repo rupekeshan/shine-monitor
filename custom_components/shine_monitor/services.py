@@ -205,8 +205,8 @@ async def _import_history_for_plant(
                     day_str = day_str.split(" ")[0]
                     day_date = datetime.datetime.strptime(day_str, "%Y-%m-%d")
                     
-                    # Skip future dates
-                    if day_date.date() > now.date():
+                    # Skip today and future dates - today is handled by live sensor
+                    if day_date.date() >= now.date():
                         continue
                     
                     day_energy = float(day_record.get("val") or day_record.get("energy") or day_record.get("value") or 0)
@@ -214,9 +214,10 @@ async def _import_history_for_plant(
                 except (ValueError, KeyError):
                     continue
             
-            # Determine how many days in this month (up to today if current month)
+            # Determine how many days in this month (up to yesterday if current month)
+            # Today is excluded - live sensor handles current day
             if year == now.year and month == now.month:
-                days_in_month = now.day
+                days_in_month = now.day - 1  # Exclude today
             else:
                 days_in_month = calendar.monthrange(year, month)[1]
             
@@ -272,10 +273,10 @@ async def _import_history_for_plant(
                         reconciled_daily[day] = daily_values[day] * scale_factor
                     _LOGGER.debug("Scaled daily values by %.3f to match monthly total", scale_factor)
             
-            # Add reconciled daily values to our list
+            # Add reconciled daily values to our list (excluding today)
             for day in range(1, days_in_month + 1):
                 day_date = datetime.date(year, month, day)
-                if day_date > now.date():
+                if day_date >= now.date():
                     break
                 energy = reconciled_daily.get(day, 0)
                 if energy > 0:
@@ -302,21 +303,21 @@ async def _import_history_for_plant(
     for day_date, day_energy in all_daily_stats:
         cumulative_sum += day_energy
         
-        # Create timestamp at local NOON, then convert to UTC
-        # Using noon (12:00) instead of midnight ensures the timestamp stays within
-        # the correct local day even after truncation for half-hour TZ offsets like IST (+5:30)
-        # Midnight IST would become 18:30 UTC -> truncated to 18:00 UTC (previous day!)
-        # Noon IST becomes 06:30 UTC -> truncated to 06:00 UTC (same day) ✓
-        local_noon = datetime.datetime(
+        # Create timestamp at local 6 PM (18:00), then convert to UTC
+        # Using 6 PM because:
+        # 1. Solar generation is complete for the day by evening
+        # 2. 18:00 IST = 12:30 UTC -> truncated to 12:00 UTC (same day) ✓
+        # 3. Avoids overlap with live sensor which handles current day
+        local_evening = datetime.datetime(
             day_date.year, day_date.month, day_date.day,
-            12, 0, 0
+            18, 0, 0  # 6 PM local time
         )
         if local_tz:
-            local_noon = local_noon.replace(tzinfo=local_tz)
-            stat_time = local_noon.astimezone(datetime.timezone.utc)
+            local_evening = local_evening.replace(tzinfo=local_tz)
+            stat_time = local_evening.astimezone(datetime.timezone.utc)
             stat_time = stat_time.replace(minute=0, second=0, microsecond=0)
         else:
-            stat_time = local_noon.replace(tzinfo=datetime.timezone.utc)
+            stat_time = local_evening.replace(tzinfo=datetime.timezone.utc)
         
         statistics.append(
             StatisticData(
@@ -372,19 +373,19 @@ async def _import_history_for_plant(
         for day_date, day_energy in all_daily_stats:
             daily_cumulative += day_energy
             
-            # Create timestamp at local NOON, then convert to UTC
-            # Using noon ensures the timestamp stays within the correct local day
-            # even after truncation for half-hour TZ offsets like IST (+5:30)
-            local_noon = datetime.datetime(
+            # Create timestamp at local 6 PM (18:00), then convert to UTC
+            # Using 6 PM ensures solar generation is complete for the day
+            # and avoids overlap with live sensor handling current day
+            local_evening = datetime.datetime(
                 day_date.year, day_date.month, day_date.day,
-                12, 0, 0
+                18, 0, 0  # 6 PM local time
             )
             if local_tz:
-                local_noon = local_noon.replace(tzinfo=local_tz)
-                stat_time = local_noon.astimezone(datetime.timezone.utc)
+                local_evening = local_evening.replace(tzinfo=local_tz)
+                stat_time = local_evening.astimezone(datetime.timezone.utc)
                 stat_time = stat_time.replace(minute=0, second=0, microsecond=0)
             else:
-                stat_time = local_noon.replace(tzinfo=datetime.timezone.utc)
+                stat_time = local_evening.replace(tzinfo=datetime.timezone.utc)
             
             daily_statistics.append(
                 StatisticData(
