@@ -1,55 +1,46 @@
 alias: Solar Notification
-description: "Real-time solar system monitoring with smart alerts"
+description: Real-time solar system monitoring with smart alerts
 triggers:
-  # WiFi/connection lost - 30 min grace period to ignore DNS hiccups
   - trigger: state
     entity_id: sensor.current_solar_production
-    to: "unavailable"
+    to: unavailable
     for: "00:30:00"
     id: wifi_down
-
-  # Real inverter alarm (excludes grid faults/power cuts)
   - trigger: state
     entity_id: binary_sensor.solar_plant_rupekeshan_has_inverter_alarms
     to: "on"
     id: inverter_alarm
-
-  # Daily summary check at sunset
   - trigger: sun
     event: sunset
     offset: "-01:00:00"
     id: daily_check
-
 conditions:
-  # Only alert during daytime
   - condition: sun
     after: sunrise
     before: sunset
-
 actions:
   - choose:
       - conditions:
           - condition: trigger
             id: wifi_down
         sequence:
-          # Save current volume
           - variables:
-              previous_volume: "{{ state_attr('media_player.rupekeshan_s_echo_dot', 'volume_level') | float(0.5) }}"
-          # Set volume to max
+              previous_volume: >-
+                {{ state_attr('media_player.rupekeshan_s_echo_dot',
+                'volume_level') | float(0.5) }}
           - action: media_player.volume_set
             target:
               entity_id: media_player.rupekeshan_s_echo_dot
             data:
-              volume_level: 1.0
-          # Announce
+              volume_level: 1
           - action: notify.alexa_media_rupekeshan_s_echo_dot
             data:
-              message: "Solar alert. The Shine Monitor data is missing. Please check your terrace WiFi."
+              message: >-
+                Solar alert. The Shine Monitor data is missing. Please check
+                your terrace WiFi.
               data:
                 type: tts
-          # Wait for announcement to finish
           - delay: "00:00:08"
-          # Restore previous volume
           - action: media_player.volume_set
             target:
               entity_id: media_player.rupekeshan_s_echo_dot
@@ -57,34 +48,32 @@ actions:
               volume_level: "{{ previous_volume }}"
           - action: notify.family_phones
             data:
-              title: "Solar WiFi Down"
-              message: "Shine Monitor offline for 30+ minutes. Check terrace WiFi."
+              title: Solar WiFi Down
+              message: Shine Monitor offline for 30+ minutes. Check terrace WiFi.
               data:
                 priority: high
                 ttl: 0
-
       - conditions:
           - condition: trigger
             id: inverter_alarm
         sequence:
-          # Save current volume
           - variables:
-              previous_volume: "{{ state_attr('media_player.rupekeshan_s_echo_dot', 'volume_level') | float(0.5) }}"
-          # Set volume to max
+              previous_volume: >-
+                {{ state_attr('media_player.rupekeshan_s_echo_dot',
+                'volume_level') | float(0.5) }}
           - action: media_player.volume_set
             target:
               entity_id: media_player.rupekeshan_s_echo_dot
             data:
-              volume_level: 1.0
-          # Announce
+              volume_level: 1
           - action: notify.alexa_media_rupekeshan_s_echo_dot
             data:
-              message: "Solar alert. The inverter has a fault. Check the display for an error code."
+              message: >-
+                Solar alert. The inverter has a fault. Check the display for an
+                error code.
               data:
                 type: tts
-          # Wait for announcement to finish
           - delay: "00:00:08"
-          # Restore previous volume
           - action: media_player.volume_set
             target:
               entity_id: media_player.rupekeshan_s_echo_dot
@@ -92,12 +81,11 @@ actions:
               volume_level: "{{ previous_volume }}"
           - action: notify.family_phones
             data:
-              title: "⚠️ Inverter Alarm"
-              message: "Real inverter fault detected. Check display for error code."
+              title: ⚠️ Inverter Alarm
+              message: Real inverter fault detected. Check display for error code.
               data:
                 priority: high
                 ttl: 0
-
       - conditions:
           - condition: trigger
             id: daily_check
@@ -105,24 +93,23 @@ actions:
             entity_id: sensor.solar_plant_rupekeshan_daily_energy
             below: 0.1
         sequence:
-          # Save current volume
           - variables:
-              previous_volume: "{{ state_attr('media_player.rupekeshan_s_echo_dot', 'volume_level') | float(0.5) }}"
-          # Set volume to max
+              previous_volume: >-
+                {{ state_attr('media_player.rupekeshan_s_echo_dot',
+                'volume_level') | float(0.5) }}
           - action: media_player.volume_set
             target:
               entity_id: media_player.rupekeshan_s_echo_dot
             data:
-              volume_level: 1.0
-          # Announce
+              volume_level: 1
           - action: notify.alexa_media_rupekeshan_s_echo_dot
             data:
-              message: "Solar alert. The inverter produced zero power today. Check for an error on the display."
+              message: >-
+                Solar alert. The inverter produced zero power today. Check for
+                an error on the display.
               data:
                 type: tts
-          # Wait for announcement to finish
           - delay: "00:00:08"
-          # Restore previous volume
           - action: media_player.volume_set
             target:
               entity_id: media_player.rupekeshan_s_echo_dot
@@ -130,49 +117,48 @@ actions:
               volume_level: "{{ previous_volume }}"
           - action: notify.family_phones
             data:
-              title: "Zero Solar Production"
-              message: "Inverter produced 0 kWh today. Check for errors."
+              title: Zero Solar Production
+              message: Inverter produced 0 kWh today. Check for errors.
+
 
 ---
+
 alias: Solar Daily Reading Announcement
-description: "Announce daily solar production summary on Alexa at sunset"
+description: Announce daily solar production summary on Alexa at sunset
 triggers:
   - trigger: sun
     event: sunset
     offset: "-00:30:00"
-
 actions:
-  # Save current volume
   - variables:
-      previous_volume: "{{ state_attr('media_player.rupekeshan_s_echo_dot', 'volume_level') | float(0.5) }}"
-  # Set volume to max
+      previous_volume: >-
+        {{ state_attr('media_player.rupekeshan_s_echo_dot', 'volume_level') |
+        float(0.5) }}
   - action: media_player.volume_set
     target:
       entity_id: media_player.rupekeshan_s_echo_dot
     data:
-      volume_level: 1.0
-  # Announce
+      volume_level: 1
   - action: notify.alexa_media_rupekeshan_s_echo_dot
     data:
       message: >
-        Today your solar panels produced 
-        {{ states('sensor.solar_plant_rupekeshan_daily_energy') | round(1) }} kilowatt hours.
-        This month you have generated 
-        {{ states('sensor.solar_plant_rupekeshan_monthly_energy') | round(1) }} kilowatt hours.
+        Today your solar panels produced  {{
+        states('sensor.solar_plant_rupekeshan_daily_energy') | float(0) | round(1) }}
+        kilowatt hours. This month you have generated  {{
+        states('sensor.solar_plant_rupekeshan_monthly_energy') | float(0) | round(1) }}
+        kilowatt hours.
       data:
         type: tts
-  # Wait for announcement to finish
   - delay: "00:00:10"
-  # Restore previous volume
   - action: media_player.volume_set
     target:
       entity_id: media_player.rupekeshan_s_echo_dot
     data:
       volume_level: "{{ previous_volume }}"
-  # Send phone notification
   - action: notify.family_phones
     data:
-      title: "Daily Solar Report"
+      title: Daily Solar Report
       message: >
-        Today: {{ states('sensor.solar_plant_rupekeshan_daily_energy') | round(1) }} kWh
-        This month: {{ states('sensor.solar_plant_rupekeshan_monthly_energy') | round(1) }} kWh
+        Today: {{ states('sensor.solar_plant_rupekeshan_daily_energy') |
+        float(0) | round(1) }} kWh This month: {{
+        states('sensor.solar_plant_rupekeshan_monthly_energy') | float(0) | round(1) }} kWh
